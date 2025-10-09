@@ -31,6 +31,7 @@
   - Export decorators to install the `window.openai` mock provider (defined in Step 3).
   - Set Storybook parameters (layout, controls, interactions).
 - Add `.storybook/tsconfig.json` that extends the root `tsconfig.json` to ensure path aliases remain valid.
+- Register the custom OpenAI toolbar addon located in `.storybook/openai-addon/` so Storybook surfaces both the toolbar controls and inspector panel by default.
 
 ## 3. Build an OpenAI Host Mock
 - Create `src/testing/openai-storybook.ts`:

@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react";
 import { userEvent, within } from "@storybook/test";
 import { MockOpenAiProvider } from "../testing/openai-storybook";
 import { pizzazListToolOutput } from "../testing/fixtures";
-import { PizzazListApp } from "./index";
+import { PizzazListApp } from "./PizzazListApp";
 
 const meta: Meta<typeof PizzazListApp> = {
   title: "Widgets/Pizzaz List",

@@ -1,4 +1,5 @@
 import type { Preview, StoryContext, StoryFn } from "@storybook/react";
+import "./openai-addon/preview-hooks";
 import { MockOpenAiProvider } from "../src/testing/openai-storybook";
 import type { OpenAiGlobals } from "../src/types";
 

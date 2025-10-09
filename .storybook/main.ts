@@ -8,6 +8,7 @@ const config: StorybookConfig = {
     "@storybook/addon-interactions",
     "@storybook/addon-a11y",
     "@storybook/addon-viewport",
+    "./openai-addon/register",
   ],
   framework: {
     name: "@storybook/react-vite",
