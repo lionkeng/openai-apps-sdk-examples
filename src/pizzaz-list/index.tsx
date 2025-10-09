@@ -1,9 +1,8 @@
-import React from "react";
 import { createRoot } from "react-dom/client";
-import markers from "../pizzaz/markers.json";
 import { PlusCircle, Star } from "lucide-react";
+import markers from "../pizzaz/markers.json";
 
-function App() {
+export function PizzazListApp() {
   const places = markers?.places || [];
 
   return (
@@ -108,4 +107,15 @@ function App() {
   );
 }
 
-createRoot(document.getElementById("pizzaz-list-root")).render(<App />);
+export default PizzazListApp;
+
+if (typeof document !== "undefined") {
+  const container = document.getElementById("pizzaz-list-root");
+  if (container) {
+    createRoot(container).render(<PizzazListApp />);
+  } else {
+    console.error(
+      "[pizzaz-list] Failed to mount widget: no element with id 'pizzaz-list-root' found."
+    );
+  }
+}
