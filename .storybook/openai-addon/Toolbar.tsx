@@ -212,27 +212,16 @@ const ToolbarPopover = ({
       />
 
       <SectionLabel>Quick Actions</SectionLabel>
+      <ControlSelect
+        label="Display Mode"
+        disabled={!globals}
+        value={globals?.displayMode ?? ""}
+        options={displayModeOptions}
+        onChange={(mode) =>
+          onCallMethod("requestDisplayMode", [{ mode }])
+        }
+      />
       <div style={buttonRowStyle}>
-        <button
-          type="button"
-          style={buttonStyle}
-          onClick={() =>
-            onCallMethod("requestDisplayMode", [{ mode: "fullscreen" }])
-          }
-        >
-          Request fullscreen
-        </button>
-        <button
-          type="button"
-          style={buttonStyle}
-          onClick={() =>
-            onCallMethod("sendFollowUpMessage", [
-              { prompt: "Tell me about the top pizza spots." },
-            ])
-          }
-        >
-          Send follow-up
-        </button>
         <button
           type="button"
           style={buttonStyle}

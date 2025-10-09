@@ -49,8 +49,8 @@ const widgets: PizzazWidget[] = [
     invoked: "Served a fresh map",
     html: `
 <div id="pizzaz-root"></div>
-<link rel="stylesheet" href="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-0038.css">
-<script type="module" src="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-0038.js"></script>
+<link rel="stylesheet" href="http://localhost:4444/pizzaz-2d2b.css">
+<script type="module" src="http://localhost:4444/pizzaz-2d2b.js"></script>
     `.trim(),
     responseText: "Rendered a pizza map!"
   },
@@ -62,8 +62,8 @@ const widgets: PizzazWidget[] = [
     invoked: "Served a fresh carousel",
     html: `
 <div id="pizzaz-carousel-root"></div>
-<link rel="stylesheet" href="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-carousel-0038.css">
-<script type="module" src="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-carousel-0038.js"></script>
+<link rel="stylesheet" href="http://localhost:4444/pizzaz-carousel-2d2b.css">
+<script type="module" src="http://localhost:4444/pizzaz-carousel-2d2b.js"></script>
     `.trim(),
     responseText: "Rendered a pizza carousel!"
   },
@@ -75,8 +75,8 @@ const widgets: PizzazWidget[] = [
     invoked: "Served a fresh album",
     html: `
 <div id="pizzaz-albums-root"></div>
-<link rel="stylesheet" href="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-albums-0038.css">
-<script type="module" src="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-albums-0038.js"></script>
+<link rel="stylesheet" href="http://localhost:4444/pizzaz-albums-2d2b.css">
+<script type="module" src="http://localhost:4444/pizzaz-albums-2d2b.js"></script>
     `.trim(),
     responseText: "Rendered a pizza album!"
   },
@@ -88,8 +88,8 @@ const widgets: PizzazWidget[] = [
     invoked: "Served a fresh list",
     html: `
 <div id="pizzaz-list-root"></div>
-<link rel="stylesheet" href="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-list-0038.css">
-<script type="module" src="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-list-0038.js"></script>
+<link rel="stylesheet" href="http://localhost:4444/pizzaz-list-2d2b.css">
+<script type="module" src="http://localhost:4444/pizzaz-list-2d2b.js"></script>
     `.trim(),
     responseText: "Rendered a pizza list!"
   },
