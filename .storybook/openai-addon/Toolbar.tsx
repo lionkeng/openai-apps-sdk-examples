@@ -212,15 +212,6 @@ const ToolbarPopover = ({
       />
 
       <SectionLabel>Quick Actions</SectionLabel>
-      <ControlSelect
-        label="Display Mode"
-        disabled={!globals}
-        value={globals?.displayMode ?? ""}
-        options={displayModeOptions}
-        onChange={(mode) =>
-          onCallMethod("requestDisplayMode", [{ mode }])
-        }
-      />
       <div style={buttonRowStyle}>
         <button
           type="button"
