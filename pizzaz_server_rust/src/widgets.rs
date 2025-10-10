@@ -86,7 +86,7 @@ static WIDGETS: LazyLock<Vec<PizzazWidget>> = LazyLock::new(|| {
         PizzazWidget {
             id: "pizza-list".to_string(),
             title: "Show Pizza List".to_string(),
-            template_uri: "ui://widget/pizza-list.html".to_string(),
+            template_uri: "ui://widget/pizza-list-2d2b.html".to_string(),
             invoking: "Hand-tossing a list".to_string(),
             invoked: "Served a fresh list".to_string(),
             html: r#"

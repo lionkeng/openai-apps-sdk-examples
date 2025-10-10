@@ -206,7 +206,7 @@ fn widget_tool_to_mcp(tool: WidgetTool) -> McpTool {
         Arc::new(map)
     });
     mcp_tool.title = Some(tool.title);
-    // No direct meta channel for tools in rmcp crate; domain struct retains metadata.
+    // Metadata is injected later by the HTTP augmentation layer.
     mcp_tool
 }
 
@@ -500,6 +500,33 @@ mod tests {
         let meta = result.meta.as_object().expect("meta should be present");
         assert_eq!(meta["openai/widgetAccessible"], JsonValue::Bool(true));
         assert!(meta["openai/outputTemplate"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_call_tool_result_serialization_includes_meta() {
+        let handler = PizzazServerHandler::new();
+        let result = handler
+            .call_widget_tool("pizza-map", serde_json::json!({"pizzaTopping": "olives"}))
+            .await
+            .expect("tool call should succeed");
+
+        let serialized = serde_json::to_value(widget_call_result_to_mcp(result))
+            .expect("serialization succeeds");
+        let meta = serialized
+            .get("_meta")
+            .expect("meta should be present")
+            .as_object()
+            .expect("meta should be an object");
+        assert_eq!(
+            meta.get("openai/outputTemplate")
+                .expect("output template present"),
+            "ui://widget/pizza-map.html"
+        );
+        assert_eq!(
+            meta.get("openai/toolInvocation/invoked")
+                .expect("invoked message present"),
+            "Served a fresh map"
+        );
     }
 
     #[tokio::test]
