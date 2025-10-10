@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useChannel } from "@storybook/manager-api";
-import { IconButton, WithTooltip } from "@storybook/components";
+import { IconButton } from "@storybook/components";
 import { WandIcon } from "@storybook/icons";
 import type { DisplayMode, DeviceType, Theme } from "../../src/types";
 import type { HostSnapshot, HostMethodName } from "../../src/testing/openai-storybook";
@@ -125,6 +126,9 @@ const dangerButtonStyle: React.CSSProperties = {
   borderColor: "#b32228",
 };
 
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(Math.max(value, min), max);
+
 const ToolbarPopover = ({
   snapshot,
   onUpdateGlobals,
@@ -239,7 +243,21 @@ const ToolbarPopover = ({
 
 export const Toolbar = () => {
   const [snapshot, setSnapshot] = useState<HostSnapshot | null>(null);
-  const [tooltipVisible, setTooltipVisible] = useState(false);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [position, setPosition] = useState(() => {
+    if (typeof window === "undefined") {
+      return { x: 24, y: 96 };
+    }
+    const widthEstimate = 300;
+    return {
+      x: Math.max(window.innerWidth - widthEstimate - 24, 24),
+      y: 96,
+    };
+  });
+  const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(
+    null
+  );
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const [editorState, setEditorState] = useState<JsonEditorState>(null);
 
   const emit = useChannel(
@@ -254,6 +272,93 @@ export const Toolbar = () => {
   useEffect(() => {
     emit(OPENAI_EVENT_REQUEST_SNAPSHOT);
   }, [emit]);
+
+  useEffect(() => {
+    if (!popoverOpen) return;
+    emit(OPENAI_EVENT_REQUEST_SNAPSHOT);
+  }, [popoverOpen, emit]);
+
+  useEffect(() => {
+    if (!dragOffset || typeof window === "undefined") return;
+
+    const offset = dragOffset;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+
+    const handleMouseMove = (event: MouseEvent) => {
+      setPosition((prevPosition) => {
+        const width = containerRef.current?.offsetWidth ?? 320;
+        const height = containerRef.current?.offsetHeight ?? 360;
+        const maxX = Math.max(window.innerWidth - width - 16, 16);
+        const maxY = Math.max(window.innerHeight - height - 16, 16);
+        return {
+          x: clamp(event.clientX - offset.x, 16, maxX),
+          y: clamp(event.clientY - offset.y, 16, maxY),
+        };
+      });
+    };
+
+    const handleMouseUp = () => {
+      setDragOffset(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [dragOffset]);
+
+  useEffect(() => {
+    if (!popoverOpen || typeof window === "undefined") return;
+
+    const clampToViewport = () => {
+      setPosition((prevPosition) => {
+        const width = containerRef.current?.offsetWidth ?? 320;
+        const height = containerRef.current?.offsetHeight ?? 360;
+        const maxX = Math.max(window.innerWidth - width - 16, 16);
+        const maxY = Math.max(window.innerHeight - height - 16, 16);
+        return {
+          x: clamp(prevPosition.x, 16, maxX),
+          y: clamp(prevPosition.y, 16, maxY),
+        };
+      });
+    };
+
+    clampToViewport();
+    window.addEventListener("resize", clampToViewport);
+
+    return () => {
+      window.removeEventListener("resize", clampToViewport);
+    };
+  }, [popoverOpen]);
+
+  useEffect(() => {
+    if (!popoverOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!containerRef.current) return;
+      if (containerRef.current.contains(event.target as Node)) return;
+      setPopoverOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPopoverOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.removeEventListener("mousedown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [popoverOpen]);
 
   const handleUpdateGlobals = (patch: GlobalsPatch) => {
     emit(OPENAI_EVENT_UPDATE_GLOBALS, { patch });
@@ -282,7 +387,7 @@ export const Toolbar = () => {
       text: JSON.stringify(current ?? (field === "toolInput" ? {} : null), null, 2),
       error: null,
     });
-    setTooltipVisible(false);
+    setPopoverOpen(false);
   };
 
   const closeEditor = () => setEditorState(null);
@@ -310,33 +415,114 @@ export const Toolbar = () => {
     }
   };
 
+  const handleTogglePopover = () => {
+    setPopoverOpen((prev) => !prev);
+  };
+
+  const handleClosePopover = () => {
+    setPopoverOpen(false);
+  };
+
+  const handleDragStart = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    setDragOffset({
+      x: event.clientX - position.x,
+      y: event.clientY - position.y,
+    });
+  };
+
+  const portalTarget =
+    typeof document === "undefined" ? null : document.body;
+
+  const popover =
+    popoverOpen && portalTarget
+      ? createPortal(
+          <div
+            ref={containerRef}
+            role="dialog"
+            aria-label="OpenAI host controls"
+            style={{
+              position: "fixed",
+              top: `${position.y}px`,
+              left: `${position.x}px`,
+              zIndex: 9998,
+              background: "var(--openai-toolbar-surface, #fff)",
+              color: "var(--openai-toolbar-foreground, inherit)",
+              borderRadius: 8,
+              minWidth: 260,
+              maxWidth: 320,
+              boxShadow:
+                "0 20px 30px rgba(15,23,42,0.18), 0 8px 12px rgba(15,23,42,0.12)",
+              border: "1px solid rgba(15,23,42,0.12)",
+            }}
+          >
+            <div
+              onMouseDown={handleDragStart}
+              style={{
+                cursor: dragOffset ? "grabbing" : "grab",
+                padding: "8px 12px",
+                fontSize: 12,
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                background: "var(--openai-toolbar-header-bg, #0f172a)",
+                color: "var(--openai-toolbar-header-fg, #fff)",
+                borderTopLeftRadius: 8,
+                borderTopRightRadius: 8,
+                borderBottom: "1px solid rgba(255,255,255,0.08)",
+                textTransform: "uppercase",
+                letterSpacing: 0.4,
+              }}
+            >
+              <span>OpenAI Host Controls</span>
+              <button
+                type="button"
+                onClick={handleClosePopover}
+                style={{
+                  appearance: "none",
+                  background: "transparent",
+                  border: "none",
+                  color: "inherit",
+                  cursor: "pointer",
+                  fontSize: 16,
+                  lineHeight: 1,
+                  padding: 4,
+                  margin: 0,
+                }}
+                aria-label="Close OpenAI host controls"
+              >
+                ×
+              </button>
+            </div>
+            <ToolbarPopover
+              snapshot={snapshot}
+              onUpdateGlobals={handleUpdateGlobals}
+              onCallMethod={handleCallMethod}
+              onReset={handleReset}
+              onClearHistory={handleClearHistory}
+              onEditJson={handleEditJson}
+              onRequestSnapshot={() => emit(OPENAI_EVENT_REQUEST_SNAPSHOT)}
+            />
+          </div>,
+          portalTarget
+        )
+      : null;
+
   return (
     <>
-      <WithTooltip
-        placement="top"
-        trigger="click"
-        closeOnOutsideClick
-        tooltip={
-          <ToolbarPopover
-            snapshot={snapshot}
-            onUpdateGlobals={handleUpdateGlobals}
-            onCallMethod={handleCallMethod}
-            onReset={handleReset}
-            onClearHistory={handleClearHistory}
-            onEditJson={handleEditJson}
-            onRequestSnapshot={() => emit(OPENAI_EVENT_REQUEST_SNAPSHOT)}
-          />
-        }
-        onVisibilityChange={setTooltipVisible}
+      <IconButton
+        key="openai-toolbar"
+        title="OpenAI host controls"
+        active={popoverOpen}
+        onClick={handleTogglePopover}
+        aria-pressed={popoverOpen}
       >
-        <IconButton
-          key="openai-toolbar"
-          title="OpenAI host controls"
-          active={tooltipVisible}
-        >
-          <WandIcon size={14} color="#F46C21" />
-        </IconButton>
-      </WithTooltip>
+        <WandIcon size={14} color="#F46C21" />
+      </IconButton>
+
+      {popover}
 
       {editorState && (
         <div

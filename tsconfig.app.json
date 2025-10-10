@@ -18,7 +18,6 @@
     "types": ["vite/client", "@react-three/fiber"],
 
     // Helpful for TS resolving and editor tooling
-    "baseUrl": ".",
     "paths": {},
 
     /* Linting */
