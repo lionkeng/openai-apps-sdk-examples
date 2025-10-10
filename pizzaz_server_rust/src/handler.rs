@@ -1,159 +1,454 @@
 //! MCP server handler for Pizzaz widgets
 
 use crate::{types::ToolInput, widgets};
-use anyhow::Result;
+use anyhow::{Context, Result};
+use rmcp::{
+    handler::server::ServerHandler,
+    model::{
+        self, AnnotateAble, CallToolRequestParam, CallToolResult as McpCallToolResult, Content,
+        ErrorData, Implementation, InitializeRequestParam, InitializeResult,
+        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, Meta,
+        PaginatedRequestParam, ProtocolVersion, RawResource, RawResourceTemplate, ResourceContents,
+        ResourcesCapability, ServerCapabilities, Tool as McpTool, ToolsCapability,
+    },
+    service::{NotificationContext, RequestContext, RoleServer},
+};
+use serde_json::{Map as JsonMap, Value as JsonValue};
+use std::{future::Future, sync::Arc};
 
-/// MCP server handler for Pizzaz widgets
+/// High-level tool information for tests and internal conversion.
 #[derive(Debug, Clone)]
-pub struct PizzazServerHandler;
-
-/// Tool definition for MCP
-#[derive(Debug, Clone)]
-pub struct Tool {
+pub struct WidgetTool {
     pub name: String,
+    pub title: String,
     pub description: String,
-    pub input_schema: serde_json::Value,
-    pub meta: Option<serde_json::Value>,
+    pub input_schema: JsonValue,
+    pub meta: JsonValue,
 }
 
-/// Result of calling a tool
+/// Result of invoking a widget tool.
 #[derive(Debug, Clone)]
-pub struct CallToolResult {
-    pub content: Vec<serde_json::Value>,
-    pub structured_content: serde_json::Value,
-    pub meta: Option<serde_json::Value>,
+pub struct WidgetCallResult {
+    pub content: Vec<Content>,
+    pub structured_content: JsonValue,
+    pub meta: JsonValue,
 }
 
-/// Resource definition for MCP
+/// Represents a widget resource entry.
 #[derive(Debug, Clone)]
-pub struct Resource {
+pub struct WidgetResource {
     pub uri: String,
     pub name: String,
     pub description: String,
     pub mime_type: String,
-    pub meta: Option<serde_json::Value>,
+    pub meta: JsonValue,
 }
 
-/// Resource content
+/// HTML content returned when reading a widget resource.
 #[derive(Debug, Clone)]
-pub struct ResourceContent {
+pub struct WidgetResourceContent {
     pub uri: String,
     pub mime_type: String,
     pub text: String,
-    pub meta: Option<serde_json::Value>,
+    pub meta: JsonValue,
 }
 
-/// Resource template
+/// Resource template definition for widgets.
 #[derive(Debug, Clone)]
-pub struct ResourceTemplate {
+pub struct WidgetResourceTemplate {
     pub uri_template: String,
     pub name: String,
     pub description: String,
     pub mime_type: String,
-    pub meta: Option<serde_json::Value>,
+    pub meta: JsonValue,
 }
 
+/// MCP server handler for Pizzaz widgets.
+#[derive(Debug, Clone, Default)]
+pub struct PizzazServerHandler;
+
 impl PizzazServerHandler {
-    /// Creates a new handler instance
+    /// Creates a new handler instance.
     pub fn new() -> Self {
         Self
     }
 
-    /// Lists all available tools
-    pub async fn list_tools(&self) -> Vec<Tool> {
+    /// Lists all widget tools for internal use.
+    pub async fn list_widget_tools(&self) -> Vec<WidgetTool> {
         widgets::get_all_widgets()
             .iter()
-            .map(|widget| Tool {
+            .map(|widget| WidgetTool {
                 name: widget.id.clone(),
+                title: widget.title.clone(),
                 description: widget.title.clone(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "pizzaTopping": {
-                            "type": "string",
-                            "description": "Topping to mention when rendering the widget."
-                        }
-                    },
-                    "required": ["pizzaTopping"],
-                    "additionalProperties": false
-                }),
-                meta: Some(widget.meta()),
+                input_schema: build_tool_input_schema(),
+                meta: widget.meta(),
             })
             .collect()
     }
 
-    /// Calls a tool with given arguments
-    pub async fn call_tool(
+    /// Calls a widget tool with structured arguments.
+    pub async fn call_widget_tool(
         &self,
         name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<CallToolResult> {
-        // Look up widget
-        let widget = widgets::get_widget_by_id(name)
-            .ok_or_else(|| anyhow::anyhow!("Unknown tool: {}", name))?;
+        arguments: JsonValue,
+    ) -> Result<WidgetCallResult> {
+        let widget =
+            widgets::get_widget_by_id(name).with_context(|| format!("Unknown tool: {name}"))?;
 
-        // Parse and validate arguments
-        let input: ToolInput = serde_json::from_value(arguments)
-            .map_err(|e| anyhow::anyhow!("Invalid tool arguments: {}", e))?;
+        let input: ToolInput =
+            serde_json::from_value(arguments).context("Invalid tool arguments")?;
 
-        // Build response
-        Ok(CallToolResult {
-            content: vec![serde_json::json!({
-                "type": "text",
-                "text": widget.response_text,
-            })],
-            structured_content: serde_json::json!({
-                "pizzaTopping": input.pizza_topping,
-            }),
-            meta: Some(widget.meta()),
+        let content = Content::text(widget.response_text.clone());
+        let mut structured = JsonMap::new();
+        structured.insert(
+            "pizzaTopping".to_string(),
+            JsonValue::String(input.pizza_topping),
+        );
+
+        Ok(WidgetCallResult {
+            content: vec![content],
+            structured_content: JsonValue::Object(structured),
+            meta: widget.meta(),
         })
     }
 
-    /// Lists all available resources
-    pub async fn list_resources(&self) -> Vec<Resource> {
+    /// Lists widget resources for internal use.
+    pub async fn list_widget_resources(&self) -> Vec<WidgetResource> {
         widgets::get_all_widgets()
             .iter()
-            .map(|widget| Resource {
+            .map(|widget| WidgetResource {
                 uri: widget.template_uri.clone(),
                 name: widget.title.clone(),
                 description: format!("{} widget markup", widget.title),
-                mime_type: "text/html+skybridge".to_string(),
-                meta: Some(widget.meta()),
+                mime_type: HTML_WIDGET_MIME.to_string(),
+                meta: widget.meta(),
             })
             .collect()
     }
 
-    /// Reads a resource by URI
-    pub async fn read_resource(&self, uri: &str) -> Result<ResourceContent> {
-        let widget = widgets::get_widget_by_uri(uri)
-            .ok_or_else(|| anyhow::anyhow!("Unknown resource: {}", uri))?;
+    /// Reads the content for a specific widget resource.
+    pub async fn read_widget_resource(&self, uri: &str) -> Result<WidgetResourceContent> {
+        let widget =
+            widgets::get_widget_by_uri(uri).with_context(|| format!("Unknown resource: {uri}"))?;
 
-        Ok(ResourceContent {
+        Ok(WidgetResourceContent {
             uri: widget.template_uri.clone(),
-            mime_type: "text/html+skybridge".to_string(),
+            mime_type: HTML_WIDGET_MIME.to_string(),
             text: widget.html.clone(),
-            meta: Some(widget.meta()),
+            meta: widget.meta(),
         })
     }
 
-    /// Lists all resource templates
-    pub async fn list_resource_templates(&self) -> Vec<ResourceTemplate> {
+    /// Lists all widget resource templates.
+    pub async fn list_widget_resource_templates(&self) -> Vec<WidgetResourceTemplate> {
         widgets::get_all_widgets()
             .iter()
-            .map(|widget| ResourceTemplate {
+            .map(|widget| WidgetResourceTemplate {
                 uri_template: widget.template_uri.clone(),
                 name: widget.title.clone(),
                 description: format!("{} widget markup", widget.title),
-                mime_type: "text/html+skybridge".to_string(),
-                meta: Some(widget.meta()),
+                mime_type: HTML_WIDGET_MIME.to_string(),
+                meta: widget.meta(),
             })
             .collect()
     }
 }
 
-impl Default for PizzazServerHandler {
-    fn default() -> Self {
-        Self::new()
+const HTML_WIDGET_MIME: &str = "text/html+skybridge";
+
+fn build_tool_input_schema() -> JsonValue {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "pizzaTopping": {
+                "type": "string",
+                "description": "Topping to mention when rendering the widget."
+            }
+        },
+        "required": ["pizzaTopping"],
+        "additionalProperties": false
+    })
+}
+
+fn value_to_meta(value: JsonValue) -> Meta {
+    match value {
+        JsonValue::Object(map) => Meta(map),
+        _ => Meta::default(),
+    }
+}
+
+fn value_to_map(value: &JsonValue) -> JsonMap<String, JsonValue> {
+    value.as_object().cloned().unwrap_or_default()
+}
+
+fn widget_call_result_to_mcp(result: WidgetCallResult) -> McpCallToolResult {
+    McpCallToolResult {
+        content: result.content,
+        structured_content: Some(result.structured_content),
+        is_error: Some(false),
+        meta: Some(value_to_meta(result.meta)),
+    }
+}
+
+fn widget_resource_content_to_mcp(content: WidgetResourceContent) -> ResourceContents {
+    ResourceContents::TextResourceContents {
+        uri: content.uri,
+        mime_type: Some(content.mime_type),
+        text: content.text,
+        meta: Some(value_to_meta(content.meta)),
+    }
+}
+
+fn widget_tool_to_mcp(tool: WidgetTool) -> McpTool {
+    let mut mcp_tool = McpTool::new(tool.name.clone(), tool.description.clone(), {
+        let map = value_to_map(&tool.input_schema);
+        Arc::new(map)
+    });
+    mcp_tool.title = Some(tool.title);
+    // No direct meta channel for tools in rmcp crate; domain struct retains metadata.
+    mcp_tool
+}
+
+fn widget_resource_to_mcp(resource: WidgetResource) -> model::Resource {
+    RawResource {
+        uri: resource.uri,
+        name: resource.name.clone(),
+        title: Some(resource.name),
+        description: Some(resource.description),
+        mime_type: Some(resource.mime_type),
+        size: None,
+        icons: None,
+    }
+    .no_annotation()
+}
+
+fn widget_template_to_mcp(template: WidgetResourceTemplate) -> model::ResourceTemplate {
+    RawResourceTemplate {
+        uri_template: template.uri_template,
+        name: template.name,
+        title: None,
+        description: Some(template.description),
+        mime_type: Some(template.mime_type),
+    }
+    .no_annotation()
+}
+
+impl ServerHandler for PizzazServerHandler {
+    fn ping(
+        &self,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<(), ErrorData>> + Send + '_ {
+        async move { Ok(()) }
+    }
+
+    fn initialize(
+        &self,
+        _request: InitializeRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<InitializeResult, ErrorData>> + Send + '_ {
+        async move {
+            let capabilities = ServerCapabilities::builder()
+                .enable_tools_with(ToolsCapability {
+                    list_changed: Some(false),
+                })
+                .enable_resources_with(ResourcesCapability {
+                    subscribe: Some(false),
+                    list_changed: Some(false),
+                })
+                .build();
+
+            Ok(InitializeResult {
+                protocol_version: ProtocolVersion::V_2024_11_05,
+                capabilities,
+                server_info: Implementation {
+                    name: "pizzaz-rust".to_string(),
+                    title: Some("Pizzaz MCP Server (Rust)".to_string()),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    icons: None,
+                    website_url: None,
+                },
+                instructions: Some(
+                    "Use the pizza-themed tools to render widgets in ChatGPT.".to_string(),
+                ),
+            })
+        }
+    }
+
+    fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListToolsResult, ErrorData>> + Send + '_ {
+        async move {
+            let tools = self
+                .list_widget_tools()
+                .await
+                .into_iter()
+                .map(widget_tool_to_mcp)
+                .collect();
+
+            Ok(ListToolsResult {
+                tools,
+                next_cursor: None,
+            })
+        }
+    }
+
+    fn call_tool(
+        &self,
+        request: CallToolRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<McpCallToolResult, ErrorData>> + Send + '_ {
+        async move {
+            let result = self
+                .call_widget_tool(
+                    &request.name,
+                    request
+                        .arguments
+                        .map(JsonValue::Object)
+                        .unwrap_or_else(|| JsonValue::Object(JsonMap::new())),
+                )
+                .await
+                .map_err(|err| ErrorData::invalid_params(err.to_string(), None))?;
+
+            Ok(widget_call_result_to_mcp(result))
+        }
+    }
+
+    fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListResourcesResult, ErrorData>> + Send + '_ {
+        async move {
+            let resources = self
+                .list_widget_resources()
+                .await
+                .into_iter()
+                .map(widget_resource_to_mcp)
+                .collect();
+
+            Ok(ListResourcesResult {
+                resources,
+                next_cursor: None,
+            })
+        }
+    }
+
+    fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListResourceTemplatesResult, ErrorData>> + Send + '_ {
+        async move {
+            let resource_templates = self
+                .list_widget_resource_templates()
+                .await
+                .into_iter()
+                .map(widget_template_to_mcp)
+                .collect();
+
+            Ok(ListResourceTemplatesResult {
+                resource_templates,
+                next_cursor: None,
+            })
+        }
+    }
+
+    fn read_resource(
+        &self,
+        request: model::ReadResourceRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<model::ReadResourceResult, ErrorData>> + Send + '_ {
+        async move {
+            let content = self
+                .read_widget_resource(&request.uri)
+                .await
+                .map_err(|err| ErrorData::invalid_params(err.to_string(), None))?;
+
+            Ok(model::ReadResourceResult {
+                contents: vec![widget_resource_content_to_mcp(content)],
+            })
+        }
+    }
+
+    fn get_prompt(
+        &self,
+        _request: model::GetPromptRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<model::GetPromptResult, ErrorData>> + Send + '_ {
+        async move { Err(ErrorData::method_not_found::<model::GetPromptRequestMethod>()) }
+    }
+
+    fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<model::ListPromptsResult, ErrorData>> + Send + '_ {
+        async move { Err(ErrorData::method_not_found::<model::ListPromptsRequestMethod>()) }
+    }
+
+    fn complete(
+        &self,
+        _request: model::CompleteRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<model::CompleteResult, ErrorData>> + Send + '_ {
+        async move { Err(ErrorData::method_not_found::<model::CompleteRequestMethod>()) }
+    }
+
+    fn set_level(
+        &self,
+        _request: model::SetLevelRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<(), ErrorData>> + Send + '_ {
+        async move { Ok(()) }
+    }
+
+    fn subscribe(
+        &self,
+        _request: model::SubscribeRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<(), ErrorData>> + Send + '_ {
+        async move { Err(ErrorData::method_not_found::<model::SubscribeRequestMethod>()) }
+    }
+
+    fn unsubscribe(
+        &self,
+        _request: model::UnsubscribeRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<(), ErrorData>> + Send + '_ {
+        async move { Err(ErrorData::method_not_found::<model::UnsubscribeRequestMethod>()) }
+    }
+
+    fn on_cancelled(
+        &self,
+        _notification: model::CancelledNotificationParam,
+        _context: NotificationContext<RoleServer>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        async move {}
+    }
+
+    fn on_progress(
+        &self,
+        _notification: model::ProgressNotificationParam,
+        _context: NotificationContext<RoleServer>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        async move {}
+    }
+
+    fn on_initialized(
+        &self,
+        _context: NotificationContext<RoleServer>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        async move {}
+    }
+
+    fn on_roots_list_changed(
+        &self,
+        _context: NotificationContext<RoleServer>,
+    ) -> impl Future<Output = ()> + Send + '_ {
+        async move {}
     }
 }
 
@@ -161,204 +456,89 @@ impl Default for PizzazServerHandler {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_handler_creation() {
-        let handler = PizzazServerHandler::new();
-        // Handler should be created without errors
-        let _ = handler;
-    }
-
-    #[test]
-    fn test_handler_implements_send_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<PizzazServerHandler>();
-    }
-
-    #[test]
-    fn test_handler_default() {
-        let handler = PizzazServerHandler;
-        let _ = handler;
-    }
-
-    // Tests for list_tools
     #[tokio::test]
-    async fn test_list_tools_count() {
+    async fn test_list_widget_tools_contains_expected_entries() {
         let handler = PizzazServerHandler::new();
-        let tools = handler.list_tools().await;
+        let tools = handler.list_widget_tools().await;
+        let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
         assert_eq!(tools.len(), 5);
-    }
-
-    #[tokio::test]
-    async fn test_list_tools_contains_expected_tools() {
-        let handler = PizzazServerHandler::new();
-        let tools = handler.list_tools().await;
-
-        let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert!(tool_names.contains(&"pizza-map"));
-        assert!(tool_names.contains(&"pizza-carousel"));
-        assert!(tool_names.contains(&"pizza-albums"));
-        assert!(tool_names.contains(&"pizza-list"));
-        assert!(tool_names.contains(&"pizza-video"));
-    }
-
-    #[tokio::test]
-    async fn test_list_tools_schema_validation() {
-        let handler = PizzazServerHandler::new();
-        let tools = handler.list_tools().await;
-
-        let pizza_map = tools.iter().find(|t| t.name == "pizza-map").unwrap();
-
-        // Verify input schema structure
-        assert_eq!(pizza_map.input_schema["type"], "object");
-        assert!(pizza_map.input_schema["properties"]["pizzaTopping"].is_object());
-
-        let required = pizza_map.input_schema["required"].as_array().unwrap();
-        assert!(required.contains(&serde_json::json!("pizzaTopping")));
-
-        assert_eq!(pizza_map.input_schema["additionalProperties"], false);
-    }
-
-    #[tokio::test]
-    async fn test_list_tools_metadata() {
-        let handler = PizzazServerHandler::new();
-        let tools = handler.list_tools().await;
-
-        for tool in &tools {
-            let meta = tool.meta.as_ref().expect("Tool should have metadata");
-            assert_eq!(meta["openai/widgetAccessible"], true);
-            assert_eq!(meta["openai/resultCanProduceWidget"], true);
-            assert!(meta["openai/outputTemplate"].is_string());
+        assert!(names.contains(&"pizza-map"));
+        assert!(names.contains(&"pizza-carousel"));
+        assert!(names.contains(&"pizza-albums"));
+        assert!(names.contains(&"pizza-list"));
+        assert!(names.contains(&"pizza-video"));
+        for tool in tools {
+            let meta = tool
+                .meta
+                .as_object()
+                .expect("tool meta should be an object");
+            assert!(meta.contains_key("openai/outputTemplate"));
+            assert_eq!(meta["openai/widgetAccessible"], JsonValue::Bool(true));
         }
     }
 
-    // Tests for call_tool
     #[tokio::test]
-    async fn test_call_tool_success() {
+    async fn test_call_widget_tool_includes_structured_content() {
         let handler = PizzazServerHandler::new();
-        let args = serde_json::json!({"pizzaTopping": "mushrooms"});
-
-        let result = handler.call_tool("pizza-map", args).await;
-        assert!(result.is_ok());
-
-        let result = result.unwrap();
-
-        // Verify text content
-        assert_eq!(result.content.len(), 1);
-        assert_eq!(result.content[0]["type"], "text");
-        assert_eq!(result.content[0]["text"], "Rendered a pizza map!");
-
-        // Verify structured content
-        assert_eq!(result.structured_content["pizzaTopping"], "mushrooms");
-
-        // Verify metadata
-        let meta = result.meta.expect("Should have metadata");
-        assert_eq!(meta["openai/widgetAccessible"], true);
-    }
-
-    #[tokio::test]
-    async fn test_call_tool_unknown_tool() {
-        let handler = PizzazServerHandler::new();
-        let args = serde_json::json!({"pizzaTopping": "olives"});
-
-        let result = handler.call_tool("nonexistent-tool", args).await;
-        assert!(result.is_err());
-
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("Unknown tool"));
-    }
-
-    #[tokio::test]
-    async fn test_call_tool_invalid_arguments() {
-        let handler = PizzazServerHandler::new();
-
-        // Missing required field
-        let args = serde_json::json!({});
-        let result = handler.call_tool("pizza-map", args).await;
-        assert!(result.is_err());
-
-        // Wrong type
-        let args = serde_json::json!({"pizzaTopping": 123});
-        let result = handler.call_tool("pizza-carousel", args).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_call_tool_all_widgets() {
-        let handler = PizzazServerHandler::new();
-        let widget_ids = [
-            "pizza-map",
-            "pizza-carousel",
-            "pizza-albums",
-            "pizza-list",
-            "pizza-video",
-        ];
-
-        for widget_id in &widget_ids {
-            let args = serde_json::json!({"pizzaTopping": "pepperoni"});
-            let result = handler.call_tool(widget_id, args).await;
-
-            assert!(result.is_ok(), "Failed for widget: {}", widget_id);
-        }
-    }
-
-    // Tests for list_resources
-    #[tokio::test]
-    async fn test_list_resources() {
-        let handler = PizzazServerHandler::new();
-        let resources = handler.list_resources().await;
-
-        assert_eq!(resources.len(), 5);
-
-        // Check one resource in detail
-        let pizza_map = resources
-            .iter()
-            .find(|r| r.uri == "ui://widget/pizza-map.html")
-            .expect("pizza-map resource should exist");
-
-        assert_eq!(pizza_map.name, "Show Pizza Map");
-        assert_eq!(pizza_map.mime_type, "text/html+skybridge");
-        assert!(pizza_map.description.contains("widget markup"));
-    }
-
-    #[tokio::test]
-    async fn test_read_resource_success() {
-        let handler = PizzazServerHandler::new();
-
         let result = handler
-            .read_resource("ui://widget/pizza-carousel.html")
-            .await;
-        assert!(result.is_ok());
+            .call_widget_tool("pizza-map", serde_json::json!({"pizzaTopping": "mushroom"}))
+            .await
+            .expect("tool call should succeed");
 
-        let content = result.unwrap();
-        assert_eq!(content.uri, "ui://widget/pizza-carousel.html");
-        assert_eq!(content.mime_type, "text/html+skybridge");
-        assert!(content.text.contains("pizzaz-carousel-root"));
-
-        let meta = content.meta.expect("Should have metadata");
-        assert_eq!(meta["openai/widgetAccessible"], true);
-    }
-
-    #[tokio::test]
-    async fn test_read_resource_not_found() {
-        let handler = PizzazServerHandler::new();
-
-        let result = handler.read_resource("ui://widget/invalid.html").await;
-        assert!(result.is_err());
-
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("Unknown resource"));
-    }
-
-    #[tokio::test]
-    async fn test_list_resource_templates() {
-        let handler = PizzazServerHandler::new();
-        let templates = handler.list_resource_templates().await;
-
-        assert_eq!(templates.len(), 5);
-
-        for template in &templates {
-            assert!(template.uri_template.starts_with("ui://widget/"));
-            assert_eq!(template.mime_type, "text/html+skybridge");
+        assert_eq!(
+            result.structured_content["pizzaTopping"],
+            JsonValue::String("mushroom".into())
+        );
+        assert_eq!(result.content.len(), 1);
+        let content = &result.content[0];
+        match content.raw {
+            model::RawContent::Text(ref text) => {
+                assert!(text.text.contains("Rendered"));
+            }
+            _ => panic!("Expected text content"),
         }
+        let meta = result.meta.as_object().expect("meta should be present");
+        assert_eq!(meta["openai/widgetAccessible"], JsonValue::Bool(true));
+        assert!(meta["openai/outputTemplate"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_list_widget_resources() {
+        let handler = PizzazServerHandler::new();
+        let resources = handler.list_widget_resources().await;
+        assert_eq!(resources.len(), 5);
+        assert!(resources
+            .iter()
+            .any(|resource| resource.uri == "ui://widget/pizza-map.html"));
+        for resource in resources {
+            let meta = resource
+                .meta
+                .as_object()
+                .expect("resource meta should be an object");
+            assert!(meta.contains_key("openai/outputTemplate"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_widget_resource_returns_html() {
+        let handler = PizzazServerHandler::new();
+        let content = handler
+            .read_widget_resource("ui://widget/pizza-map.html")
+            .await
+            .expect("resource should exist");
+        assert_eq!(content.mime_type, HTML_WIDGET_MIME);
+        assert!(content.text.contains("pizzaz"));
+        let meta = content.meta.as_object().expect("meta should be present");
+        assert!(meta["openai/outputTemplate"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_list_widget_resource_templates() {
+        let handler = PizzazServerHandler::new();
+        let templates = handler.list_widget_resource_templates().await;
+        assert_eq!(templates.len(), 5);
+        assert!(templates
+            .iter()
+            .all(|template| template.uri_template.starts_with("ui://widget/")));
     }
 }

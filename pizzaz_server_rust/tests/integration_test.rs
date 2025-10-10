@@ -8,8 +8,10 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use pizzaz_server_rust::handler::PizzazServerHandler;
-use serde_json::json;
+use serde_json::{json, Value};
 use tower::ServiceExt; // for oneshot()
+
+const ACCEPT_HEADER_VALUE: &str = "application/json, text/event-stream";
 
 /// Helper to create test app
 fn create_test_app() -> axum::Router {
@@ -38,7 +40,27 @@ async fn parse_response_body(
         .await
         .map_err(|e| format!("Failed to collect body: {}", e))?
         .to_bytes();
-    serde_json::from_slice(&body).map_err(|e| format!("Failed to parse JSON: {}", e))
+    if body.is_empty() {
+        return Ok(Value::Null);
+    }
+
+    if let Ok(json) = serde_json::from_slice(&body) {
+        return Ok(json);
+    }
+
+    // Attempt to parse Server-Sent Event payloads ("data: {json}\n\n")
+    let text = String::from_utf8_lossy(&body);
+    for line in text.lines() {
+        if let Some(data) = line.strip_prefix("data: ") {
+            let trimmed = data.trim();
+            if !trimmed.is_empty() {
+                return serde_json::from_str(trimmed)
+                    .map_err(|e| format!("Failed to parse JSON: {}", e));
+            }
+        }
+    }
+
+    Err("Failed to parse JSON: unsupported response format".to_string())
 }
 
 // ============================================================================
@@ -48,7 +70,7 @@ async fn parse_response_body(
 #[tokio::test]
 async fn test_handler_list_tools_returns_five_tools() {
     let handler = PizzazServerHandler::new();
-    let tools = handler.list_tools().await;
+    let tools = handler.list_widget_tools().await;
 
     assert_eq!(tools.len(), 5);
     assert!(tools.iter().any(|t| t.name == "pizza-map"));
@@ -60,17 +82,17 @@ async fn test_handler_call_tool_returns_structured_content() {
     let handler = PizzazServerHandler::new();
     let args = json!({ "pizzaTopping": "mushroom" });
 
-    let result = handler.call_tool("pizza-map", args).await;
-
-    assert!(result.is_ok());
-    let call_result = result.unwrap();
-    assert_eq!(call_result.structured_content["pizzaTopping"], "mushroom");
+    let result = handler
+        .call_widget_tool("pizza-map", args)
+        .await
+        .expect("tool call succeeds");
+    assert_eq!(result.structured_content["pizzaTopping"], json!("mushroom"));
 }
 
 #[tokio::test]
 async fn test_handler_list_resources_returns_five_resources() {
     let handler = PizzazServerHandler::new();
-    let resources = handler.list_resources().await;
+    let resources = handler.list_widget_resources().await;
 
     assert_eq!(resources.len(), 5);
     assert!(resources
@@ -81,7 +103,9 @@ async fn test_handler_list_resources_returns_five_resources() {
 #[tokio::test]
 async fn test_handler_read_resource_returns_html() {
     let handler = PizzazServerHandler::new();
-    let result = handler.read_resource("ui://widget/pizza-map.html").await;
+    let result = handler
+        .read_widget_resource("ui://widget/pizza-map.html")
+        .await;
 
     assert!(result.is_ok());
     let content = result.unwrap();
@@ -92,7 +116,7 @@ async fn test_handler_read_resource_returns_html() {
 #[tokio::test]
 async fn test_handler_list_resource_templates_returns_five_templates() {
     let handler = PizzazServerHandler::new();
-    let templates = handler.list_resource_templates().await;
+    let templates = handler.list_widget_resource_templates().await;
 
     assert_eq!(templates.len(), 5);
     assert!(templates
@@ -112,7 +136,8 @@ async fn test_cors_preflight() {
         .oneshot(
             Request::builder()
                 .method(Method::OPTIONS)
-                .uri("/")
+                .uri("/mcp")
+                .header(header::ACCEPT, ACCEPT_HEADER_VALUE)
                 .header(header::ORIGIN, "https://chatgpt.com")
                 .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
                 .body(Body::empty())
@@ -134,10 +159,14 @@ async fn test_cors_on_actual_request() {
     let response = app
         .oneshot(
             Request::builder()
-                .method(Method::GET)
-                .uri("/")
+                .method(Method::POST)
+                .uri("/mcp")
+                .header(header::ACCEPT, ACCEPT_HEADER_VALUE)
                 .header(header::ORIGIN, "https://chatgpt.com")
-                .body(Body::empty())
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&build_jsonrpc_request("ping", json!({}), 1)).unwrap(),
+                ))
                 .unwrap(),
         )
         .await
@@ -182,15 +211,36 @@ async fn test_multiple_requests_with_ready_call() {
         let response = app
             .oneshot(
                 Request::builder()
-                    .method(Method::GET)
-                    .uri("/")
+                    .method(Method::OPTIONS)
+                    .uri("/mcp")
+                    .header(header::ACCEPT, ACCEPT_HEADER_VALUE)
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        // Should handle multiple requests
-        assert!(response.status() == StatusCode::NOT_FOUND || response.status() == StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::OK);
     }
+}
+
+#[tokio::test]
+async fn test_missing_accept_header_returns_406() {
+    let app = create_test_app();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&build_jsonrpc_request("tools/list", json!({}), 1)).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
 }
