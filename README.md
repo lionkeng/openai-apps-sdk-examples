@@ -25,6 +25,7 @@ The MCP servers in this demo highlight how each tool can light up widgets by com
 - `assets/` – Generated HTML, JS, and CSS bundles after running the build step.
 - `pizzaz_server_node/` – MCP server implemented with the official TypeScript SDK.
 - `pizzaz_server_python/` – Python MCP server that returns the Pizzaz widgets.
+- `pizzaz_server_rust` - Rust MCP server that returns the Pizzaz widgets.
 - `solar-system_server_python/` – Python MCP server for the 3D solar system widget.
 - `build-all.mts` – Vite build orchestrator that produces hashed bundles for every widget entrypoint.
 
@@ -74,7 +75,7 @@ The assets are exposed at [`http://localhost:4444`](http://localhost:4444) with 
 
 The repository ships several demo MCP servers that highlight different widget bundles:
 
-- **Pizzaz (Node & Python)** – pizza-inspired collection of tools and components
+- **Pizzaz (Node & Python & Rust)** – pizza-inspired collection of tools and components
 - **Solar system (Python)** – 3D solar system viewer
 
 Every tool response includes plain text content, structured JSON, and `_meta.openai/outputTemplate` metadata so the Apps SDK can hydrate the matching widget.
@@ -93,6 +94,13 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r pizzaz_server_python/requirements.txt
 uvicorn pizzaz_server_python.main:app --port 8000
+```
+
+### Running the Rust server
+
+```bash
+cd pizzaz_server_rust
+cargo run --bin pizzaz_server_rust
 ```
 
 ### Solar system Python server
