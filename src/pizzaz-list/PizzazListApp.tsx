@@ -4,8 +4,24 @@ import markers from "../pizzaz/markers.json";
 import { useDisplayMode } from "../use-display-mode";
 import { useOpenAiGlobal } from "../use-openai-global";
 
-export function PizzazListApp() {
-  const places = markers?.places || [];
+type PizzazListToolOutput = {
+  pizzaTopping?: string;
+  city?: string;
+};
+
+type Props = {
+  toolOutput?: PizzazListToolOutput | null;
+};
+
+export function PizzazListApp({ toolOutput: toolOutputProp }: Props) {
+  const toolOutput =
+    toolOutputProp ?? (useOpenAiGlobal("toolOutput") as PizzazListToolOutput | null);
+
+  const allPlaces = markers?.places || [];
+  const cityFilter = toolOutput?.city?.trim().toLowerCase();
+  const places = cityFilter
+    ? allPlaces.filter((p) => p.city?.toLowerCase().includes(cityFilter))
+    : allPlaces;
   const displayMode = useDisplayMode();
   const theme = useOpenAiGlobal("theme");
   const isFullscreen = displayMode === "fullscreen";
@@ -51,7 +67,9 @@ export function PizzazListApp() {
               National Best Pizza List
             </div>
             <div className={clsx("text-sm", secondaryTextClass)}>
-              A ranking of the best pizzerias in the world
+              {toolOutput?.city
+                ? `Top pizzerias near ${toolOutput.city}`
+                : "A ranking of the best pizzerias in the world"}
             </div>
           </div>
           <div
