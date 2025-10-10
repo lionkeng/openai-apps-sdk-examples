@@ -71,6 +71,30 @@ pnpm run serve
 
 The assets are exposed at [`http://localhost:4444`](http://localhost:4444) with CORS enabled so that local tooling (including MCP inspectors) can fetch them.
 
+## Storybook harness
+
+Use Storybook to interactively exercise each widget against a mocked ChatGPT host:
+
+```bash
+pnpm run storybook
+```
+
+This launches the dev server at [`http://localhost:6006`](http://localhost:6006). Widgets render inside a `MockOpenAiProvider`, which emulates the [`window.openai` host APIs](src/testing/openai-storybook.tsx). Global toolbar controls let you flip the OpenAI theme, display mode, and locale at runtime.
+
+To run automated interaction tests (powered by the Storybook test runner and play functions), use:
+
+```bash
+pnpm run test:storybook
+```
+
+You can also build the static Storybook bundle for publishing or CI snapshots:
+
+```bash
+pnpm run build:storybook
+```
+
+When adding new stories, import fixtures from [`src/testing/fixtures.ts`](src/testing/fixtures.ts) and wrap components in `MockOpenAiProvider` to hydrate the expected `toolOutput` or `widgetState`.
+
 ## Run the MCP servers
 
 The repository ships several demo MCP servers that highlight different widget bundles:

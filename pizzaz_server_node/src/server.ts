@@ -53,8 +53,8 @@ const widgets: PizzazWidget[] = [
     invoked: 'Served a fresh map',
     html: `
 <div id="pizzaz-root"></div>
-<link rel="stylesheet" href="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-0038.css">
-<script type="module" src="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-0038.js"></script>
+<link rel="stylesheet" href="http://localhost:4444/pizzaz-2d2b.css">
+<script type="module" src="http://localhost:4444/pizzaz-2d2b.js"></script>
     `.trim(),
     responseText: 'Rendered a pizza map!',
   },
@@ -66,8 +66,8 @@ const widgets: PizzazWidget[] = [
     invoked: 'Served a fresh carousel',
     html: `
 <div id="pizzaz-carousel-root"></div>
-<link rel="stylesheet" href="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-carousel-0038.css">
-<script type="module" src="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-carousel-0038.js"></script>
+<link rel="stylesheet" href="http://localhost:4444/pizzaz-carousel-2d2b.css">
+<script type="module" src="http://localhost:4444/pizzaz-carousel-2d2b.js"></script>
     `.trim(),
     responseText: 'Rendered a pizza carousel!',
   },
@@ -127,6 +127,10 @@ const toolInputSchema = {
       type: 'string',
       description: 'Topping to mention when rendering the widget.',
     },
+    city: {
+      type: 'string',
+      description: 'City filter for pizzerias to show in the widget.',
+    },
   },
   required: ['pizzaTopping'],
   additionalProperties: false,
@@ -134,6 +138,7 @@ const toolInputSchema = {
 
 const toolInputParser = z.object({
   pizzaTopping: z.string(),
+  city: z.string(),
 })
 
 const tools: Tool[] = widgets.map((widget) => ({
@@ -237,6 +242,7 @@ function createPizzazServer(): Server {
         ],
         structuredContent: {
           pizzaTopping: args.pizzaTopping,
+          city: args.city,
         },
         _meta: widgetMeta(widget),
       }
