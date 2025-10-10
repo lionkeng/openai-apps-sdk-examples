@@ -1,0 +1,31 @@
+[package]
+name = "pizzaz_server_rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rmcp = { version = "0.8", features = ["server", "transport-streamable-http-server"] }
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.5", features = ["cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+mime = "0.3"
+tokio-test = "0.4"
+
+[[bin]]
+name = "pizzaz_server_rust"
+path = "src/main.rs"
+
+[lib]
+name = "pizzaz_server_rust"
+path = "src/lib.rs"
