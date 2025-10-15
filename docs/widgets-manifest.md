@@ -62,4 +62,17 @@ Configure the refresh endpoint via environment variables:
 - `WIDGETS_REFRESH_TOKEN`: Bearer token required to access the refresh endpoint. If unset, the endpoint returns `404`.
 - `WIDGETS_REFRESH_RATE_LIMIT` (optional): Rate limit in the form `count/window`, e.g. `10/60s` (default). Supports seconds (`s`) or minutes (`m`).
 
+After running `pnpm run build`, you can trigger a hot reload with:
+
+```bash
+WIDGETS_REFRESH_TOKEN=... pnpm run refresh:widgets
+```
+
+The script uses `scripts/refresh-widgets.mjs`, which also accepts optional overrides:
+
+- `WIDGETS_REFRESH_URL` or `--url <http://host:port/internal/widgets/refresh>`
+- `WIDGETS_REFRESH_TOKEN` or `--token <secret>`
+
+For local workflows, you can place these values in a project-root `.env` file; the MCP server (via `dotenvy`) and the refresh script (via `dotenv`) load it automatically.
+
 On refresh, the server validates schema compatibility and asset availability, swapping the registry atomically only after a successful load. Failures keep the previous registry in memory and return structured error responses to the caller.

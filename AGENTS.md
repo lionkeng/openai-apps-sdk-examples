@@ -163,6 +163,8 @@ Use `mcp[fastapi]` package:
 - `POST /internal/widgets/refresh` hot-reloads widgets (requires `WIDGETS_REFRESH_TOKEN`; disabled when unset)
 - `GET /internal/widgets/status` exposes registry diagnostics for health checks
 - Rate limiting configurable via `WIDGETS_REFRESH_RATE_LIMIT` (e.g., `10/60s` by default)
+- Use `pnpm run refresh:widgets` (powered by `scripts/refresh-widgets.mjs`) after `pnpm run build` to load fresh assets without restarting the server
+- Both the server and script read secrets from a root `.env` file (loaded via `dotenvy` / `dotenv`) for local development
 
 ## Key Configuration Files
 

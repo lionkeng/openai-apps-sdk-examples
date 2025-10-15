@@ -24,6 +24,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 semver = "1"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 subtle = "2"
+dotenvy = "0.15"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

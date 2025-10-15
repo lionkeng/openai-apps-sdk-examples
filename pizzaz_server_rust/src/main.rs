@@ -7,6 +7,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load environment variables from .env if present for local development.
+    let _ = dotenvy::dotenv();
+
     // Initialize tracing subscriber
     tracing_subscriber::registry()
         .with(

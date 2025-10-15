@@ -15,7 +15,8 @@
     "storybook": "storybook dev --port 6006",
     "build:storybook": "storybook build",
     "test:storybook": "storybook test --ci",
-    "test:storybook:watch": "storybook test --watch"
+    "test:storybook:watch": "storybook test --watch",
+    "refresh:widgets": "node ./scripts/refresh-widgets.mjs"
   },
   "keywords": [],
   "author": "",
@@ -39,6 +40,7 @@
     "@testing-library/react": "^16.2.0",
     "@testing-library/user-event": "^14.6.1",
     "autoprefixer": "10.4.21",
+    "dotenv": "^16.4.7",
     "fast-glob": "^3.3.3",
     "postcss": "8.5.6",
     "serve": "^14.2.4",
