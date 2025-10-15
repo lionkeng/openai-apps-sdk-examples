@@ -50,12 +50,14 @@ type McpResponse = Response<BoxBody<Bytes, Infallible>>;
 pub fn create_app() -> Router {
     let session_manager = Arc::new(LocalSessionManager::default());
     let config = StreamableHttpServerConfig::default();
+    // Wrap the core MCP handler with the streamable transport so each request gets its own session.
     let streamable_service = StreamableHttpService::new(
         || Ok(handler::PizzazServerHandler::new()),
         session_manager,
         config,
     );
 
+    // Add a response decorator that ensures widget metadata is present on all outgoing messages.
     let augmented_service = MetaAugmentService::new(streamable_service);
 
     Router::new()
@@ -75,6 +77,7 @@ where
         + Clone,
     S::Future: Send + 'static,
 {
+    /// Constructs a new service wrapper that augments outgoing MCP messages with widget metadata.
     fn new(service: S) -> Self {
         Self { inner: service }
     }
@@ -90,6 +93,7 @@ where
     type Error = std::convert::Infallible;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
+    /// Propagates readiness checks to the wrapped service.
     fn poll_ready(
         &mut self,
         cx: &mut std::task::Context<'_>,
@@ -97,10 +101,12 @@ where
         self.inner.poll_ready(cx)
     }
 
+    /// Calls the wrapped service and conditionally augments JSON or SSE responses with widget metadata.
     fn call(&mut self, request: Request<axum::body::Body>) -> Self::Future {
         let future = self.inner.call(request);
         Box::pin(async move {
             let response = future.await?;
+            // Only attempt augmentation if the response advertises a supported content type.
             let Some(kind) = classify_response(&response) else {
                 if let Some(content_type) = response
                     .headers()
@@ -134,6 +140,7 @@ where
                     let mut json: Value = match serde_json::from_slice(&collected) {
                         Ok(value) => value,
                         Err(_) => {
+                            // If the body is not valid JSON we fall back to the original bytes untouched.
                             tracing::debug!(
                                 "MetaAugmentService: unable to parse JSON body; bypassing augmentation"
                             );
@@ -171,54 +178,48 @@ where
                     tracing::trace!("MetaAugmentService: enabling streaming SSE augmentation");
 
                     let mut data_stream = body.into_data_stream();
+                    // Buffer incomplete SSE events so we can rewrite each event atomically once its full content arrives.
                     let stream = stream! {
                         let mut buffer = String::new();
                         while let Some(chunk_result) = data_stream.next().await {
-                            match chunk_result {
-                                Ok(chunk) => {
-                                    match std::str::from_utf8(&chunk) {
-                                        Ok(text) => {
-                                            buffer.push_str(&text.replace("\r\n", "\n"));
-                                            while let Some(boundary) = buffer.find("\n\n") {
-                                                let event = buffer[..boundary].to_string();
-                                                buffer = buffer[boundary + 2..].to_string();
-
-                                                let (processed, event_changed) = augment_sse_event(&event);
-                                                if event_changed {
-                                                    tracing::trace!("MetaAugmentService: augmented SSE event");
-                                                }
-
-                                                let mut output = processed;
-                                                output.push_str("\n\n");
-                                                yield Ok::<Frame<Bytes>, Infallible>(Frame::data(Bytes::from(output)));
-                                            }
-                                        }
-                                        Err(_) => {
-                                            tracing::debug!("MetaAugmentService: encountered non UTF-8 SSE chunk; flushing buffer");
-                                            if !buffer.is_empty() {
-                                                let leftover = std::mem::take(&mut buffer);
-                                                yield Ok::<Frame<Bytes>, Infallible>(Frame::data(Bytes::from(leftover)));
-                                            }
-                                            yield Ok::<Frame<Bytes>, Infallible>(Frame::data(chunk));
-                                        }
-                                    }
-                                }
+                            let chunk = match chunk_result {
+                                Ok(chunk) => chunk,
                                 Err(err) => {
                                     tracing::debug!("MetaAugmentService: error reading SSE chunk: {err}");
+                                    continue;
                                 }
+                            };
+
+                            let normalized_chunk = match std::str::from_utf8(&chunk) {
+                                Ok(text) => text.replace("\r\n", "\n"),
+                                Err(_) => {
+                                    tracing::debug!("MetaAugmentService: encountered non UTF-8 SSE chunk; flushing buffer");
+                                    if !buffer.is_empty() {
+                                        let leftover = std::mem::take(&mut buffer);
+                                        yield Ok::<Frame<Bytes>, Infallible>(Frame::data(Bytes::from(leftover)));
+                                    }
+                                    yield Ok::<Frame<Bytes>, Infallible>(Frame::data(chunk));
+                                    continue;
+                                }
+                            };
+
+                            buffer.push_str(&normalized_chunk);
+
+                            while let Some(event) = drain_complete_event(&mut buffer) {
+                                let (frame, event_changed) = frame_from_event(event);
+                                if event_changed {
+                                    tracing::trace!("MetaAugmentService: augmented SSE event");
+                                }
+                                yield Ok::<Frame<Bytes>, Infallible>(frame);
                             }
                         }
 
                         if !buffer.is_empty() {
-                            let (processed, event_changed) = augment_sse_event(&buffer);
+                            let (frame, event_changed) = frame_from_event(std::mem::take(&mut buffer));
                             if event_changed {
                                 tracing::trace!("MetaAugmentService: augmented trailing SSE event");
                             }
-                            let mut output = processed;
-                            if !output.ends_with("\n\n") {
-                                output.push_str("\n\n");
-                            }
-                            yield Ok::<Frame<Bytes>, Infallible>(Frame::data(Bytes::from(output)));
+                            yield Ok::<Frame<Bytes>, Infallible>(frame);
                         }
                     };
 
@@ -230,6 +231,7 @@ where
     }
 }
 
+/// Identifies whether a response body is JSON or server-sent events based on the `Content-Type` header.
 fn classify_response(response: &McpResponse) -> Option<ResponseContentType> {
     response
         .headers()
@@ -252,12 +254,14 @@ enum ResponseContentType {
     Sse,
 }
 
+/// Injects `_meta` entries for known widgets into tools, resources, and templates within the MCP payload.
 fn augment_widget_metadata(payload: &mut Value) {
     let Some(result) = payload.get_mut("result") else {
         tracing::trace!("augment_widget_metadata: no result field present");
         return;
     };
 
+    // Attach widget metadata to any tool definitions returned by the MCP handler.
     if let Some(tools) = result.get_mut("tools").and_then(Value::as_array_mut) {
         for tool in tools {
             if let Some(object) = tool.as_object_mut() {
@@ -308,6 +312,7 @@ fn augment_widget_metadata(payload: &mut Value) {
             if let Some(object) = template.as_object_mut() {
                 if let Some(uri) = object.get("uriTemplate").and_then(Value::as_str) {
                     if let Some(widget) = crate::widgets::get_widget_by_uri(uri) {
+                        // Template URIs mirror resource URIs, so reuse the same metadata payload.
                         tracing::trace!(
                             "augment_widget_metadata: injecting metadata for template '{uri}'"
                         );
@@ -325,12 +330,33 @@ fn augment_widget_metadata(payload: &mut Value) {
     }
 }
 
+/// Removes and returns the next complete SSE event (terminated by a blank line) from the buffer.
+fn drain_complete_event(buffer: &mut String) -> Option<String> {
+    let boundary = buffer.find("\n\n")?;
+    let mut extracted: String = buffer.drain(..boundary + 2).collect();
+    if extracted.ends_with("\n\n") {
+        extracted.truncate(extracted.len() - 2);
+    }
+    Some(extracted)
+}
+
+/// Converts an SSE event payload into a `Frame`, augmenting metadata and normalising terminators.
+fn frame_from_event(event: String) -> (Frame<Bytes>, bool) {
+    let (mut processed, event_changed) = augment_sse_event(&event);
+    if !processed.ends_with("\n\n") {
+        processed.push_str("\n\n");
+    }
+    (Frame::data(Bytes::from(processed)), event_changed)
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
+/// Attempts to augment every SSE event in the provided stream, returning `None` when no changes occur.
 fn augment_sse_stream(original: &str) -> Option<String> {
     let normalized = original.replace("\r\n", "\n");
     let mut changed_any = false;
     let mut output = String::with_capacity(normalized.len());
 
+    // Walk each SSE event (terminated by a blank line) and try to inject widget metadata.
     for segment in normalized.split_inclusive("\n\n") {
         let (event_body, separator) = if segment.ends_with("\n\n") {
             (&segment[..segment.len() - 2], "\n\n")
@@ -356,11 +382,13 @@ fn augment_sse_stream(original: &str) -> Option<String> {
     }
 }
 
+/// Augments a single SSE event in-place, returning the rewritten payload and whether it changed.
 fn augment_sse_event(event: &str) -> (String, bool) {
     if event.is_empty() {
         return (String::new(), false);
     }
 
+    // Track whether any `data:` lines were rewritten so callers can decide whether to flush the event.
     let mut event_changed = false;
     let mut lines_out = Vec::new();
 
@@ -403,6 +431,7 @@ fn augment_sse_event(event: &str) -> (String, bool) {
 mod tests {
     use super::*;
 
+    /// Ensures widget metadata augmentation decorates known tools and leaves unknown ones unchanged.
     #[test]
     fn augment_widget_metadata_inserts_tool_meta() {
         let mut payload = serde_json::json!({
@@ -473,6 +502,7 @@ mod tests {
         }
     }
 
+    /// Validates that SSE payloads carrying JSON tool results receive injected widget metadata.
     #[test]
     fn augment_sse_stream_injects_meta() {
         let original = concat!(
@@ -492,6 +522,7 @@ mod tests {
         );
     }
 
+    /// Confirms that non-JSON SSE messages pass through without modification.
     #[test]
     fn augment_sse_stream_preserves_non_json_data() {
         let original = concat!(": heartbeat\n", "data: ping\n", "\n");

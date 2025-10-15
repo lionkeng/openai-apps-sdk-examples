@@ -6,9 +6,9 @@ edition = "2021"
 [dependencies]
 rmcp = { version = "0.8", features = ["server", "transport-streamable-http-server", "transport-streamable-http-server-session"] }
 tokio = { version = "1", features = ["full"] }
-axum = "0.7"
+axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.5", features = ["cors"] }
+tower-http = { version = "0.6", features = ["cors"] }
 bytes = "1"
 http = "0.2"
 http-body = "1"
