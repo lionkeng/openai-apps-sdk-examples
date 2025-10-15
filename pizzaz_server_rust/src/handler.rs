@@ -76,7 +76,7 @@ impl PizzazServerHandler {
     /// Lists all widget tools for internal use.
     pub async fn list_widget_tools(&self) -> Vec<WidgetTool> {
         widgets::get_all_widgets()
-            .iter()
+            .into_iter()
             .map(|widget| WidgetTool {
                 name: widget.id.clone(),
                 title: widget.title.clone(),
@@ -116,7 +116,7 @@ impl PizzazServerHandler {
     /// Lists widget resources for internal use.
     pub async fn list_widget_resources(&self) -> Vec<WidgetResource> {
         widgets::get_all_widgets()
-            .iter()
+            .into_iter()
             .map(|widget| WidgetResource {
                 uri: widget.template_uri.clone(),
                 name: widget.title.clone(),
@@ -143,7 +143,7 @@ impl PizzazServerHandler {
     /// Lists all widget resource templates.
     pub async fn list_widget_resource_templates(&self) -> Vec<WidgetResourceTemplate> {
         widgets::get_all_widgets()
-            .iter()
+            .into_iter()
             .map(|widget| WidgetResourceTemplate {
                 uri_template: widget.template_uri.clone(),
                 name: widget.title.clone(),
@@ -455,9 +455,11 @@ impl ServerHandler for PizzazServerHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::initialize_widgets_for_tests;
 
     #[tokio::test]
     async fn test_list_widget_tools_contains_expected_entries() {
+        initialize_widgets_for_tests();
         let handler = PizzazServerHandler::new();
         let tools = handler.list_widget_tools().await;
         let names: Vec<&str> = tools.iter().map(|tool| tool.name.as_str()).collect();
@@ -479,6 +481,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_widget_tool_includes_structured_content() {
+        initialize_widgets_for_tests();
         let handler = PizzazServerHandler::new();
         let result = handler
             .call_widget_tool("pizza-map", serde_json::json!({"pizzaTopping": "mushroom"}))
@@ -504,6 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_tool_result_serialization_includes_meta() {
+        initialize_widgets_for_tests();
         let handler = PizzazServerHandler::new();
         let result = handler
             .call_widget_tool("pizza-map", serde_json::json!({"pizzaTopping": "olives"}))
@@ -531,6 +535,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_widget_resources() {
+        initialize_widgets_for_tests();
         let handler = PizzazServerHandler::new();
         let resources = handler.list_widget_resources().await;
         assert_eq!(resources.len(), 5);
@@ -548,6 +553,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_widget_resource_returns_html() {
+        initialize_widgets_for_tests();
         let handler = PizzazServerHandler::new();
         let content = handler
             .read_widget_resource("ui://widget/pizza-map.html")
@@ -561,6 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_list_widget_resource_templates() {
+        initialize_widgets_for_tests();
         let handler = PizzazServerHandler::new();
         let templates = handler.list_widget_resource_templates().await;
         assert_eq!(templates.len(), 5);

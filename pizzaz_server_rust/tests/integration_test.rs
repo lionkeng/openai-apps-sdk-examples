@@ -4,18 +4,42 @@
 
 use axum::{
     body::Body,
+    extract::connect_info::ConnectInfo as AxumConnectInfo,
     http::{header, Method, Request, StatusCode},
 };
 use http_body_util::BodyExt;
 use pizzaz_server_rust::handler::PizzazServerHandler;
 use serde_json::{json, Value};
+use std::{net::SocketAddr, path::PathBuf, sync::Once};
 use tower::ServiceExt; // for oneshot()
+
+fn ensure_manifest_loaded() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/widgets.json");
+        std::env::set_var("WIDGETS_MANIFEST_PATH", &path);
+        std::env::set_var("WIDGETS_REFRESH_TOKEN", "test-refresh-token");
+        pizzaz_server_rust::widgets::bootstrap_registry();
+    });
+}
 
 const ACCEPT_HEADER_VALUE: &str = "application/json, text/event-stream";
 
 /// Helper to create test app
 fn create_test_app() -> axum::Router {
+    ensure_manifest_loaded();
     pizzaz_server_rust::create_app()
+}
+
+fn make_handler() -> PizzazServerHandler {
+    ensure_manifest_loaded();
+    PizzazServerHandler::new()
+}
+
+fn add_connect_info(mut request: Request<Body>, port: u16) -> Request<Body> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    request.extensions_mut().insert(AxumConnectInfo(addr));
+    request
 }
 
 /// Helper to build JSON-RPC request
@@ -69,7 +93,7 @@ async fn parse_response_body(
 
 #[tokio::test]
 async fn test_handler_list_tools_returns_five_tools() {
-    let handler = PizzazServerHandler::new();
+    let handler = make_handler();
     let tools = handler.list_widget_tools().await;
 
     assert_eq!(tools.len(), 5);
@@ -79,7 +103,7 @@ async fn test_handler_list_tools_returns_five_tools() {
 
 #[tokio::test]
 async fn test_handler_call_tool_returns_structured_content() {
-    let handler = PizzazServerHandler::new();
+    let handler = make_handler();
     let args = json!({ "pizzaTopping": "mushroom" });
 
     let result = handler
@@ -91,7 +115,7 @@ async fn test_handler_call_tool_returns_structured_content() {
 
 #[tokio::test]
 async fn test_handler_list_resources_returns_five_resources() {
-    let handler = PizzazServerHandler::new();
+    let handler = make_handler();
     let resources = handler.list_widget_resources().await;
 
     assert_eq!(resources.len(), 5);
@@ -102,7 +126,7 @@ async fn test_handler_list_resources_returns_five_resources() {
 
 #[tokio::test]
 async fn test_handler_read_resource_returns_html() {
-    let handler = PizzazServerHandler::new();
+    let handler = make_handler();
     let result = handler
         .read_widget_resource("ui://widget/pizza-map.html")
         .await;
@@ -115,13 +139,134 @@ async fn test_handler_read_resource_returns_html() {
 
 #[tokio::test]
 async fn test_handler_list_resource_templates_returns_five_templates() {
-    let handler = PizzazServerHandler::new();
+    let handler = make_handler();
     let templates = handler.list_widget_resource_templates().await;
 
     assert_eq!(templates.len(), 5);
     assert!(templates
         .iter()
         .any(|t| t.uri_template == "ui://widget/pizza-map.html"));
+}
+
+#[tokio::test]
+async fn test_widgets_status_endpoint_returns_metadata() {
+    let app = create_test_app();
+    let request = add_connect_info(
+        Request::builder()
+            .method(Method::GET)
+            .uri("/internal/widgets/status")
+            .body(Body::empty())
+            .unwrap(),
+        4100,
+    );
+
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = parse_response_body(response).await.unwrap();
+    assert_eq!(body["registry_initialized"], json!(true));
+    assert_eq!(body["widgets_count"], json!(5));
+    assert_eq!(body["schema_version"], json!("1.0.0"));
+    assert!(body["last_successful_load"].is_string());
+
+    let manifest_path = body["manifest_path"].as_str().unwrap_or_default();
+    assert!(
+        manifest_path.ends_with("tests/fixtures/widgets.json"),
+        "manifest_path should point to fixture, got {}",
+        manifest_path
+    );
+    assert_eq!(body["manifest_exists"], json!(true));
+}
+
+#[tokio::test]
+async fn test_refresh_endpoint_requires_token() {
+    let app = create_test_app();
+    let request = add_connect_info(
+        Request::builder()
+            .method(Method::POST)
+            .uri("/internal/widgets/refresh")
+            .body(Body::empty())
+            .unwrap(),
+        4200,
+    );
+
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let body = parse_response_body(response).await.unwrap();
+    assert_eq!(body["success"], json!(false));
+}
+
+#[tokio::test]
+async fn test_refresh_endpoint_succeeds_with_valid_token() {
+    std::env::set_var("WIDGETS_REFRESH_RATE_LIMIT", "10/60s");
+    let app = create_test_app();
+    let request = add_connect_info(
+        Request::builder()
+            .method(Method::POST)
+            .uri("/internal/widgets/refresh")
+            .header(header::AUTHORIZATION, "Bearer test-refresh-token")
+            .body(Body::empty())
+            .unwrap(),
+        4300,
+    );
+
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = parse_response_body(response).await.unwrap();
+    assert_eq!(body["success"], json!(true));
+    assert_eq!(body["widgets_loaded"], json!(5));
+    assert_eq!(body["schema_version"], json!("1.0.0"));
+}
+
+#[tokio::test]
+async fn test_refresh_endpoint_rate_limit() {
+    std::env::set_var("WIDGETS_REFRESH_RATE_LIMIT", "1/60s");
+    let app = create_test_app();
+
+    let request1 = add_connect_info(
+        Request::builder()
+            .method(Method::POST)
+            .uri("/internal/widgets/refresh")
+            .header(header::AUTHORIZATION, "Bearer test-refresh-token")
+            .body(Body::empty())
+            .unwrap(),
+        4400,
+    );
+
+    let response1 = app.clone().oneshot(request1).await.unwrap();
+    assert_eq!(response1.status(), StatusCode::OK);
+
+    let request2 = add_connect_info(
+        Request::builder()
+            .method(Method::POST)
+            .uri("/internal/widgets/refresh")
+            .header(header::AUTHORIZATION, "Bearer test-refresh-token")
+            .body(Body::empty())
+            .unwrap(),
+        4400,
+    );
+
+    let response2 = app.clone().oneshot(request2).await.unwrap();
+    assert_eq!(response2.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let retry_after = response2.headers().get(header::RETRY_AFTER);
+    assert!(retry_after.is_some());
+
+    let body = parse_response_body(response2).await.unwrap();
+    assert_eq!(body["success"], json!(false));
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Rate limit exceeded"),
+        "Expected rate limit message, got {:?}",
+        body["message"]
+    );
+
+    // Reset to default for other tests
+    std::env::set_var("WIDGETS_REFRESH_RATE_LIMIT", "10/60s");
 }
 
 // ============================================================================

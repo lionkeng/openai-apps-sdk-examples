@@ -134,6 +134,7 @@ Key hooks available:
 - Per-widget JS bundles: `{name}-{hash}.js`
 - Per-widget CSS bundles: `{name}-{hash}.css`
 - Self-contained HTML files: `{name}-{hash}.html` (with inlined CSS/JS)
+- Manifest: `assets/widgets.json` (schema documented in [docs/widgets-manifest.md](docs/widgets-manifest.md))
 
 Hash is derived from package.json version for cache-busting.
 
@@ -155,6 +156,13 @@ Use `mcp[fastapi]` package:
 - FastMCP for simplified MCP implementation
 - Uvicorn ASGI server
 - SSE + HTTP endpoints similar to Node implementation
+
+### Rust Server (`pizzaz_server_rust`)
+
+- Loads the manifest from `assets/widgets.json` (override with `WIDGETS_MANIFEST_PATH`)
+- `POST /internal/widgets/refresh` hot-reloads widgets (requires `WIDGETS_REFRESH_TOKEN`; disabled when unset)
+- `GET /internal/widgets/status` exposes registry diagnostics for health checks
+- Rate limiting configurable via `WIDGETS_REFRESH_RATE_LIMIT` (e.g., `10/60s` by default)
 
 ## Key Configuration Files
 

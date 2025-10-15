@@ -21,11 +21,15 @@ anyhow = "1"
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+semver = "1"
+time = { version = "0.3", features = ["formatting", "parsing"] }
+subtle = "2"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 mime = "0.3"
 tokio-test = "0.4"
+tempfile = "3"
 
 [[bin]]
 name = "pizzaz_server_rust"

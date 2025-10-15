@@ -7,6 +7,22 @@ import crypto from "crypto";
 import pkg from "./package.json" with { type: "json" };
 import tailwindcss from "@tailwindcss/vite";
 
+type WidgetCatalogEntry = {
+  id: string;
+  bundleName?: string;
+  title: string;
+  templateUri: string;
+  invoking: string;
+  invoked: string;
+  responseText: string;
+  htmlOverride?: string;
+  assets?: {
+    html?: string;
+    css?: string;
+    js?: string;
+  };
+};
+
 const entries = fg.sync("src/**/index.{tsx,jsx}", {
   ignore: ["**/*.stories.*"],
 });
@@ -16,14 +32,71 @@ const PER_ENTRY_CSS_GLOB = "**/*.{css,pcss,scss,sass}";
 const PER_ENTRY_CSS_IGNORE = "**/*.module.*".split(",").map((s) => s.trim());
 const GLOBAL_CSS_LIST = [path.resolve("src/index.css")];
 
+const widgetCatalog: WidgetCatalogEntry[] = [
+  {
+    id: "pizza-map",
+    bundleName: "pizzaz",
+    title: "Show Pizza Map",
+    templateUri: "ui://widget/pizza-map.html",
+    invoking: "Hand-tossing a map",
+    invoked: "Served a fresh map",
+    responseText: "Rendered a pizza map!",
+  },
+  {
+    id: "pizza-carousel",
+    bundleName: "pizzaz-carousel",
+    title: "Show Pizza Carousel",
+    templateUri: "ui://widget/pizza-carousel-2d2b.html",
+    invoking: "Carousel some spots",
+    invoked: "Served a fresh carousel",
+    responseText: "Rendered a pizza carousel!",
+  },
+  {
+    id: "pizza-albums",
+    bundleName: "pizzaz-albums",
+    title: "Show Pizza Album",
+    templateUri: "ui://widget/pizza-albums-2d2b.html",
+    invoking: "Hand-tossing an album",
+    invoked: "Served a fresh album",
+    responseText: "Rendered a pizza album!",
+  },
+  {
+    id: "pizza-list",
+    bundleName: "pizzaz-list",
+    title: "Show Pizza List",
+    templateUri: "ui://widget/pizza-list-2d2b.html",
+    invoking: "Hand-tossing a list",
+    invoked: "Served a fresh list",
+    responseText: "Rendered a pizza list!",
+  },
+  {
+    id: "pizza-video",
+    title: "Show Pizza Video",
+    templateUri: "ui://widget/pizza-video.html",
+    invoking: "Hand-tossing a video",
+    invoked: "Served a fresh video",
+    responseText: "Rendered a pizza video!",
+    htmlOverride: `
+<div id="pizzaz-video-root"></div>
+<link rel="stylesheet" href="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.css">
+<script type="module" src="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.js"></script>
+    `.trim(),
+    assets: {
+      css: "https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.css",
+      js: "https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.js",
+    },
+  },
+];
+
+const additionalTargets = ["todo", "solar-system"];
+
 const targets: string[] = [
-  "todo",
-  "solar-system",
-  "pizzaz",
-  "pizzaz-carousel",
-  "pizzaz-list",
-  "pizzaz-albums",
-  "pizzaz-video",
+  ...new Set([
+    ...widgetCatalog
+      .map((widget) => widget.bundleName)
+      .filter((name): name is string => !!name),
+    ...additionalTargets,
+  ]),
 ];
 const builtNames: string[] = [];
 
@@ -146,6 +219,15 @@ const outputs = fs
   .filter((p) => fs.existsSync(p));
 
 const renamed = [];
+const bundleArtifacts = new Map<
+  string,
+  {
+    htmlPath: string;
+    cssPath?: string;
+    jsPath?: string;
+    htmlContent: string;
+  }
+>();
 
 const h = crypto
   .createHash("sha256")
@@ -194,5 +276,109 @@ for (const name of builtNames) {
     "</html>",
   ].join("\n");
   fs.writeFileSync(htmlPath, html, { encoding: "utf8" });
+  bundleArtifacts.set(name, {
+    htmlPath,
+    cssPath: fs.existsSync(cssPath) ? cssPath : undefined,
+    jsPath: fs.existsSync(jsPath) ? jsPath : undefined,
+    htmlContent: html,
+  });
   console.log(`${htmlPath} (generated)`);
+}
+
+function isRemotePath(candidate: string | undefined): candidate is string {
+  return (
+    typeof candidate === "string" &&
+    /^(https?:)?\/\//i.test(candidate.trim())
+  );
+}
+
+function toManifestPath(assetPath: string): string {
+  return path.relative(".", assetPath).split(path.sep).join("/");
+}
+
+function ensureReadable(assetPath: string) {
+  try {
+    fs.accessSync(assetPath, fs.constants.R_OK);
+  } catch (error) {
+    throw new Error(
+      `Asset ${assetPath} is not readable or does not exist: ${String(error)}`
+    );
+  }
+}
+
+const manifestWidgets = widgetCatalog
+  .map((widget) => {
+    const artifacts = widget.bundleName
+      ? bundleArtifacts.get(widget.bundleName)
+      : undefined;
+
+    if (widget.bundleName && !artifacts) {
+      throw new Error(
+        `Expected artifacts for bundle "${widget.bundleName}" but none were generated`
+      );
+    }
+
+    const assets = {
+      html: artifacts
+        ? toManifestPath(artifacts.htmlPath)
+        : widget.assets?.html,
+      css: artifacts?.cssPath
+        ? toManifestPath(artifacts.cssPath)
+        : widget.assets?.css,
+      js: artifacts?.jsPath
+        ? toManifestPath(artifacts.jsPath)
+        : widget.assets?.js,
+    };
+
+    const htmlContent =
+      widget.htmlOverride ?? artifacts?.htmlContent ?? "<!-- empty -->";
+
+    if (!htmlContent.trim()) {
+      throw new Error(
+        `Widget "${widget.id}" produced an empty HTML payload; ensure build artifacts exist`
+      );
+    }
+
+    for (const key of ["html", "css", "js"] as const) {
+      const candidate = assets[key];
+      if (!candidate) {
+        continue;
+      }
+      if (isRemotePath(candidate)) {
+        continue;
+      }
+      ensureReadable(path.resolve(candidate));
+    }
+
+    return {
+      id: widget.id,
+      title: widget.title,
+      templateUri: widget.templateUri,
+      invoking: widget.invoking,
+      invoked: widget.invoked,
+      html: htmlContent,
+      responseText: widget.responseText,
+      assets,
+    };
+  })
+  .sort((a, b) => a.id.localeCompare(b.id));
+
+const manifest = {
+  schemaVersion: "1.0.0",
+  generatedAt: new Date().toISOString(),
+  widgets: manifestWidgets,
+};
+
+const manifestPath = path.join(outDir, "widgets.json");
+const manifestTempPath = `${manifestPath}.tmp`;
+
+try {
+  fs.writeFileSync(manifestTempPath, JSON.stringify(manifest, null, 2), {
+    encoding: "utf8",
+  });
+  fs.renameSync(manifestTempPath, manifestPath);
+  console.log(`${manifestPath} (generated)`);
+} catch (error) {
+  fs.rmSync(manifestTempPath, { force: true });
+  throw error;
 }

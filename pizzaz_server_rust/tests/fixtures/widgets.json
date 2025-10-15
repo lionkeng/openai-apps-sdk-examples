@@ -1,0 +1,76 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2024-10-15T10:30:00Z",
+  "widgets": [
+    {
+      "id": "pizza-map",
+      "title": "Show Pizza Map",
+      "templateUri": "ui://widget/pizza-map.html",
+      "invoking": "Hand-tossing a map",
+      "invoked": "Served a fresh map",
+      "html": "<div id=\"pizzaz-root\"></div>",
+      "responseText": "Rendered a pizza map!",
+      "assets": {
+        "html": "https://example.com/pizzaz-2d2b.html",
+        "css": "https://example.com/pizzaz-2d2b.css",
+        "js": "https://example.com/pizzaz-2d2b.js"
+      }
+    },
+    {
+      "id": "pizza-carousel",
+      "title": "Show Pizza Carousel",
+      "templateUri": "ui://widget/pizza-carousel-2d2b.html",
+      "invoking": "Carousel some spots",
+      "invoked": "Served a fresh carousel",
+      "html": "<div id=\"pizzaz-carousel-root\"></div>",
+      "responseText": "Rendered a pizza carousel!",
+      "assets": {
+        "html": "https://example.com/pizzaz-carousel-2d2b.html",
+        "css": "https://example.com/pizzaz-carousel-2d2b.css",
+        "js": "https://example.com/pizzaz-carousel-2d2b.js"
+      }
+    },
+    {
+      "id": "pizza-albums",
+      "title": "Show Pizza Album",
+      "templateUri": "ui://widget/pizza-albums-2d2b.html",
+      "invoking": "Hand-tossing an album",
+      "invoked": "Served a fresh album",
+      "html": "<div id=\"pizzaz-albums-root\"></div>",
+      "responseText": "Rendered a pizza album!",
+      "assets": {
+        "html": "https://example.com/pizzaz-albums-2d2b.html",
+        "css": "https://example.com/pizzaz-albums-2d2b.css",
+        "js": "https://example.com/pizzaz-albums-2d2b.js"
+      }
+    },
+    {
+      "id": "pizza-list",
+      "title": "Show Pizza List",
+      "templateUri": "ui://widget/pizza-list-2d2b.html",
+      "invoking": "Hand-tossing a list",
+      "invoked": "Served a fresh list",
+      "html": "<div id=\"pizzaz-list-root\"></div>",
+      "responseText": "Rendered a pizza list!",
+      "assets": {
+        "html": "https://example.com/pizzaz-list-2d2b.html",
+        "css": "https://example.com/pizzaz-list-2d2b.css",
+        "js": "https://example.com/pizzaz-list-2d2b.js"
+      }
+    },
+    {
+      "id": "pizza-video",
+      "title": "Show Pizza Video",
+      "templateUri": "ui://widget/pizza-video.html",
+      "invoking": "Hand-tossing a video",
+      "invoked": "Served a fresh video",
+      "html": "<div id=\"pizzaz-video-root\"></div>",
+      "responseText": "Rendered a pizza video!",
+      "assets": {
+        "html": "https://example.com/pizzaz-video-0038.html",
+        "css": "https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.css",
+        "js": "https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.js"
+      }
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+# Widgets Manifest
+
+The widgets manifest aggregates all build outputs that can be served by MCP servers in a single JSON document. It is generated automatically by `pnpm run build` (which runs `build-all.mts`) and written to `assets/widgets.json`.
+
+The manifest always contains a `schemaVersion` value so MCP servers can validate compatibility. The initial version is `1.0.0`, which is expected by the Rust server.
+
+## Schema (`schemaVersion: "1.0.0"`)
+
+```jsonc
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2025-01-01T00:00:00.000Z",
+  "widgets": [
+    {
+      "id": "pizza-map",
+      "title": "Show Pizza Map",
+      "templateUri": "ui://widget/pizza-map.html",
+      "invoking": "Hand-tossing a map",
+      "invoked": "Served a fresh map",
+      "responseText": "Rendered a pizza map!",
+      "html": "<!doctype html> ...",
+      "assets": {
+        "html": "assets/pizzaz-2d2b.html",
+        "css": "assets/pizzaz-2d2b.css",
+        "js": "assets/pizzaz-2d2b.js"
+      }
+    }
+  ]
+}
+```
+
+### Field Descriptions
+
+- `schemaVersion`: Semantic version for the manifest. Servers must check this before consuming the data.
+- `generatedAt`: ISO-8601 timestamp recorded when the manifest was produced.
+- `widgets`: Ordered list (sorted by `id`) of widget entries.
+- `widgets[].id`: Tool identifier exposed through MCP.
+- `widgets[].title`: Human readable description.
+- `widgets[].templateUri`: Resource URI bound to the widget markup.
+- `widgets[].invoking`: Status text to display while the tool is running.
+- `widgets[].invoked`: Status text after completion.
+- `widgets[].responseText`: Plain text response returned to the client.
+- `widgets[].html`: Self-contained HTML markup (inline CSS and JS) that hydrates the widget.
+- `widgets[].assets`: Optional relative paths (or absolute URLs) pointing to the generated asset files. Local builds use paths under `assets/`. Production manifests should replace these with CDN URLs.
+
+## Build Guarantees
+
+`build-all.mts` uses an atomic write strategy (`widgets.json.tmp` → `widgets.json`) and validates that every referenced local asset is present and readable before committing the manifest. If validation fails, the build stops with a descriptive error.
+
+When new widgets are added, update `widgetCatalog` in `build-all.mts` so metadata stays in sync across the manifest and MCP servers.
+
+## MCP Server Refresh Workflow
+
+The Rust MCP server consumes `assets/widgets.json` at startup and exposes two internal endpoints for operators:
+
+- `POST /internal/widgets/refresh` &mdash; Reloads the manifest without restarting the server.
+- `GET /internal/widgets/status` &mdash; Reports registry health (widget count, schema version, last successful load, manifest path).
+
+Configure the refresh endpoint via environment variables:
+
+- `WIDGETS_MANIFEST_PATH` (optional): Override the manifest location (defaults to `assets/widgets.json`).
+- `WIDGETS_REFRESH_TOKEN`: Bearer token required to access the refresh endpoint. If unset, the endpoint returns `404`.
+- `WIDGETS_REFRESH_RATE_LIMIT` (optional): Rate limit in the form `count/window`, e.g. `10/60s` (default). Supports seconds (`s`) or minutes (`m`).
+
+On refresh, the server validates schema compatibility and asset availability, swapping the registry atomically only after a successful load. Failures keep the previous registry in memory and return structured error responses to the caller.

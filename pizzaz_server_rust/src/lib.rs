@@ -6,15 +6,18 @@
 pub mod handler;
 pub mod types;
 pub mod widgets;
+pub mod widgets_manifest;
 
 #[cfg(test)]
 mod test_helpers;
 
 use async_stream::stream;
 use axum::{
-    http::{header, Request, Response},
-    routing::any_service,
-    Router,
+    extract::ConnectInfo,
+    http::{header, HeaderMap, HeaderValue, Request, Response, StatusCode},
+    response::IntoResponse,
+    routing::{any_service, get, post},
+    Extension, Json, Router,
 };
 use bytes::Bytes;
 use futures::{future::BoxFuture, StreamExt};
@@ -24,12 +27,220 @@ use rmcp::transport::{
     streamable_http_server::session::local::LocalSessionManager, StreamableHttpServerConfig,
     StreamableHttpService,
 };
+use serde::Serialize;
 use serde_json::Value;
-use std::{convert::Infallible, sync::Arc};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use subtle::ConstantTimeEq;
+use time::{format_description::well_known::Iso8601, OffsetDateTime};
+use tokio::sync::Mutex;
 use tower::Service;
 use tower_http::cors::CorsLayer;
 
 type McpResponse = Response<BoxBody<Bytes, Infallible>>;
+
+#[derive(Clone)]
+struct AppState {
+    refresh: RefreshState,
+}
+
+#[derive(Clone)]
+struct RefreshState {
+    token: Option<Arc<Vec<u8>>>,
+    rate_limiter: Arc<Mutex<RateLimiter>>,
+}
+
+impl RefreshState {
+    fn from_config(config: &RefreshConfig) -> Self {
+        let token = config
+            .token
+            .as_ref()
+            .map(|value| Arc::new(value.as_bytes().to_vec()));
+
+        Self {
+            token,
+            rate_limiter: Arc::new(Mutex::new(RateLimiter::new(
+                config.rate_limit.max_requests,
+                config.rate_limit.window,
+            ))),
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.token.is_some()
+    }
+
+    fn token_bytes(&self) -> Option<&[u8]> {
+        self.token.as_deref().map(|vec| vec.as_slice())
+    }
+}
+
+struct RateLimiter {
+    limit: u64,
+    window: Duration,
+    buckets: HashMap<IpAddr, RateLimitBucket>,
+}
+
+impl RateLimiter {
+    fn new(limit: u64, window: Duration) -> Self {
+        Self {
+            limit,
+            window,
+            buckets: HashMap::new(),
+        }
+    }
+
+    fn check(&mut self, ip: IpAddr, now: Instant) -> Result<(), RateLimitRejection> {
+        if self.buckets.len() > 1000 {
+            self.cleanup_expired(now);
+        }
+
+        let entry = self.buckets.entry(ip).or_insert_with(|| RateLimitBucket {
+            window_start: now,
+            count: 0,
+        });
+
+        if now.duration_since(entry.window_start) >= self.window {
+            entry.window_start = now;
+            entry.count = 0;
+        }
+
+        if entry.count < self.limit {
+            entry.count += 1;
+            return Ok(());
+        }
+
+        let elapsed = now.duration_since(entry.window_start);
+        let remaining = self
+            .window
+            .checked_sub(elapsed)
+            .unwrap_or_else(|| Duration::from_secs(0));
+
+        Err(RateLimitRejection {
+            retry_after: if remaining.is_zero() {
+                Duration::from_secs(1)
+            } else {
+                remaining
+            },
+        })
+    }
+
+    fn cleanup_expired(&mut self, now: Instant) {
+        self.buckets
+            .retain(|_, bucket| now.duration_since(bucket.window_start) < self.window * 2);
+    }
+}
+
+struct RateLimitBucket {
+    window_start: Instant,
+    count: u64,
+}
+
+struct RateLimitRejection {
+    retry_after: Duration,
+}
+
+struct RefreshConfig {
+    token: Option<String>,
+    rate_limit: RateLimitConfig,
+}
+
+struct RateLimitConfig {
+    max_requests: u64,
+    window: Duration,
+}
+
+impl RefreshConfig {
+    fn from_env() -> Self {
+        let token = std::env::var("WIDGETS_REFRESH_TOKEN")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let rate_limit = parse_rate_limit_config(
+            std::env::var("WIDGETS_REFRESH_RATE_LIMIT")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
+
+        Self { token, rate_limit }
+    }
+}
+
+fn parse_rate_limit_config(raw: Option<String>) -> RateLimitConfig {
+    let default = RateLimitConfig {
+        max_requests: 10,
+        window: Duration::from_secs(60),
+    };
+
+    let Some(raw) = raw else {
+        return default;
+    };
+
+    let (count_str, window_str) =
+        match raw.split_once('/') {
+            Some(parts) => parts,
+            None => {
+                tracing::warn!(
+                "Invalid WIDGETS_REFRESH_RATE_LIMIT value '{}'; falling back to default {} per {}s",
+                raw, default.max_requests, default.window.as_secs()
+            );
+                return default;
+            }
+        };
+
+    let max_requests = match count_str.parse::<u64>() {
+        Ok(value) if value > 0 => value,
+        _ => {
+            tracing::warn!(
+                "Invalid rate limit count '{}' in '{}'; using default {}",
+                count_str,
+                raw,
+                default.max_requests
+            );
+            return default;
+        }
+    };
+
+    let (magnitude_str, unit) = window_str.split_at(window_str.len().saturating_sub(1));
+    let magnitude = match magnitude_str.parse::<u64>() {
+        Ok(value) if value > 0 => value,
+        _ => {
+            tracing::warn!(
+                "Invalid rate limit window '{}' in '{}'; using default {}s",
+                window_str,
+                raw,
+                default.window.as_secs()
+            );
+            return default;
+        }
+    };
+
+    let window = match unit {
+        "s" | "S" => Duration::from_secs(magnitude),
+        "m" | "M" => Duration::from_secs(magnitude * 60),
+        _ => {
+            tracing::warn!(
+                "Unsupported rate limit unit '{}' in '{}'; using default window {}s",
+                unit,
+                raw,
+                default.window.as_secs()
+            );
+            return default;
+        }
+    };
+
+    RateLimitConfig {
+        max_requests,
+        window,
+    }
+}
 
 /// Creates the Axum application with all routes and middleware
 ///
@@ -48,6 +259,21 @@ type McpResponse = Response<BoxBody<Bytes, Infallible>>;
 /// }
 /// ```
 pub fn create_app() -> Router {
+    widgets::bootstrap_registry();
+
+    let refresh_config = RefreshConfig::from_env();
+    let refresh_state = RefreshState::from_config(&refresh_config);
+
+    if refresh_state.is_enabled() {
+        tracing::info!(
+            max_requests = refresh_config.rate_limit.max_requests,
+            window_seconds = refresh_config.rate_limit.window.as_secs(),
+            "Widgets refresh endpoint enabled"
+        );
+    } else {
+        tracing::info!("Widgets refresh endpoint disabled; set WIDGETS_REFRESH_TOKEN to enable");
+    }
+
     let session_manager = Arc::new(LocalSessionManager::default());
     let config = StreamableHttpServerConfig::default();
     // Wrap the core MCP handler with the streamable transport so each request gets its own session.
@@ -60,8 +286,15 @@ pub fn create_app() -> Router {
     // Add a response decorator that ensures widget metadata is present on all outgoing messages.
     let augmented_service = MetaAugmentService::new(streamable_service);
 
+    let app_state = AppState {
+        refresh: refresh_state,
+    };
+
     Router::new()
         .route("/mcp", any_service(augmented_service))
+        .route("/internal/widgets/refresh", post(refresh_widgets_handler))
+        .route("/internal/widgets/status", get(widgets_status_handler))
+        .layer(Extension(app_state))
         .layer(CorsLayer::permissive())
 }
 
@@ -229,6 +462,187 @@ where
             }
         })
     }
+}
+
+async fn refresh_widgets_handler(
+    Extension(state): Extension<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if !state.refresh.is_enabled() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let Some(expected) = state.refresh.token_bytes() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let Some(provided) = extract_bearer_token(&headers) else {
+        return unauthorized_response("Missing or invalid bearer token");
+    };
+
+    if expected.len() != provided.as_bytes().len()
+        || expected.ct_eq(provided.as_bytes()).unwrap_u8() == 0
+    {
+        tracing::warn!(ip = %addr.ip(), "Invalid widgets refresh token provided");
+        return unauthorized_response("Missing or invalid bearer token");
+    }
+
+    let ip = addr.ip();
+    let now = Instant::now();
+    let mut limiter = state.refresh.rate_limiter.lock().await;
+    if let Err(rejection) = limiter.check(ip, now) {
+        drop(limiter);
+        let retry_seconds = rejection.retry_after.as_secs().max(1);
+        tracing::warn!(ip = %ip, retry_after = retry_seconds, "Widgets refresh rate limit exceeded");
+
+        let metadata = widgets::registry_metadata();
+        let response = RefreshResponse {
+            success: false,
+            widgets_loaded: widgets::get_all_widgets().len(),
+            schema_version: metadata.schema_version.clone(),
+            manifest_timestamp: format_optional_timestamp(metadata.manifest_generated_at),
+            message: Some(format!(
+                "Rate limit exceeded. Retry after {} seconds.",
+                retry_seconds
+            )),
+        };
+
+        let mut http_response = build_refresh_response(StatusCode::TOO_MANY_REQUESTS, response);
+        if let Ok(value) = HeaderValue::from_str(&retry_seconds.to_string()) {
+            http_response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, value);
+        }
+        return http_response;
+    }
+    drop(limiter);
+
+    match widgets::reload_registry() {
+        Ok(outcome) => {
+            let response = RefreshResponse {
+                success: true,
+                widgets_loaded: outcome.widget_count,
+                schema_version: outcome.schema_version,
+                manifest_timestamp: format_optional_timestamp(outcome.manifest_timestamp),
+                message: None,
+            };
+            build_refresh_response(StatusCode::OK, response)
+        }
+        Err(widgets::LoadError::NotFound { path }) => {
+            let metadata = widgets::registry_metadata();
+            let message = if !metadata.registry_initialized {
+                "Manifest has never been successfully loaded".to_string()
+            } else {
+                format!("Manifest not found at {}", path.display())
+            };
+            tracing::warn!(manifest = %path.display(), "{}", message);
+
+            let response = RefreshResponse {
+                success: false,
+                widgets_loaded: widgets::get_all_widgets().len(),
+                schema_version: metadata.schema_version.clone(),
+                manifest_timestamp: format_optional_timestamp(metadata.manifest_generated_at),
+                message: Some(message),
+            };
+            build_refresh_response(StatusCode::SERVICE_UNAVAILABLE, response)
+        }
+        Err(widgets::LoadError::Validation { path, error }) => {
+            tracing::error!(
+                manifest = %path.display(),
+                error = %error,
+                "Widget manifest refresh failed"
+            );
+            let metadata = widgets::registry_metadata();
+            let response = RefreshResponse {
+                success: false,
+                widgets_loaded: widgets::get_all_widgets().len(),
+                schema_version: metadata.schema_version.clone(),
+                manifest_timestamp: format_optional_timestamp(metadata.manifest_generated_at),
+                message: Some(error.to_string()),
+            };
+            build_refresh_response(StatusCode::BAD_REQUEST, response)
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct RefreshResponse {
+    success: bool,
+    widgets_loaded: usize,
+    schema_version: Option<String>,
+    manifest_timestamp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+#[derive(Serialize)]
+struct StatusResponse {
+    registry_initialized: bool,
+    widgets_count: usize,
+    schema_version: Option<String>,
+    last_successful_load: Option<String>,
+    manifest_path: String,
+    manifest_exists: bool,
+}
+
+async fn widgets_status_handler(Extension(_state): Extension<AppState>) -> impl IntoResponse {
+    let metadata = widgets::registry_metadata();
+    let response = StatusResponse {
+        registry_initialized: metadata.registry_initialized,
+        widgets_count: widgets::get_all_widgets().len(),
+        schema_version: metadata.schema_version.clone(),
+        last_successful_load: format_optional_timestamp(metadata.last_successful_load),
+        manifest_path: metadata.manifest_path.display().to_string(),
+        manifest_exists: metadata.manifest_exists,
+    };
+
+    Json(response)
+}
+
+fn unauthorized_response(message: &str) -> axum::response::Response {
+    let metadata = widgets::registry_metadata();
+    let payload = RefreshResponse {
+        success: false,
+        widgets_loaded: widgets::get_all_widgets().len(),
+        schema_version: metadata.schema_version.clone(),
+        manifest_timestamp: format_optional_timestamp(metadata.manifest_generated_at),
+        message: Some(message.to_string()),
+    };
+    let mut response = build_refresh_response(StatusCode::UNAUTHORIZED, payload);
+    response.headers_mut().insert(
+        header::WWW_AUTHENTICATE,
+        HeaderValue::from_static("Bearer realm=\"widgets-refresh\""),
+    );
+    response
+}
+
+fn build_refresh_response(
+    status: StatusCode,
+    payload: RefreshResponse,
+) -> axum::response::Response {
+    let mut response = Json(payload).into_response();
+    *response.status_mut() = status;
+    response
+}
+
+fn format_optional_timestamp(value: Option<OffsetDateTime>) -> Option<String> {
+    value.and_then(|timestamp| timestamp.format(&Iso8601::DEFAULT).ok())
+}
+
+fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(header::AUTHORIZATION)?;
+    let value = value.to_str().ok()?.trim();
+    let mut parts = value.splitn(2, ' ');
+    let scheme = parts.next()?.to_ascii_lowercase();
+    if scheme != "bearer" {
+        return None;
+    }
+    let token = parts.next()?.trim();
+    if token.is_empty() {
+        return None;
+    }
+    Some(token)
 }
 
 /// Identifies whether a response body is JSON or server-sent events based on the `Content-Type` header.
@@ -430,10 +844,12 @@ fn augment_sse_event(event: &str) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::initialize_widgets_for_tests;
 
     /// Ensures widget metadata augmentation decorates known tools and leaves unknown ones unchanged.
     #[test]
     fn augment_widget_metadata_inserts_tool_meta() {
+        initialize_widgets_for_tests();
         let mut payload = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -505,6 +921,7 @@ mod tests {
     /// Validates that SSE payloads carrying JSON tool results receive injected widget metadata.
     #[test]
     fn augment_sse_stream_injects_meta() {
+        initialize_widgets_for_tests();
         let original = concat!(
             "event: message\r\n",
             "data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"pizza-map\"}]}}\r\n",
