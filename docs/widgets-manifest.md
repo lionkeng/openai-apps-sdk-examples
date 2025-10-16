@@ -40,8 +40,8 @@ The manifest always contains a `schemaVersion` value so MCP servers can validate
 - `widgets[].invoking`: Status text to display while the tool is running.
 - `widgets[].invoked`: Status text after completion.
 - `widgets[].responseText`: Plain text response returned to the client.
-- `widgets[].html`: Self-contained HTML markup (inline CSS and JS) that hydrates the widget.
-- `widgets[].assets`: Optional relative paths (or absolute URLs) pointing to the generated asset files. Local builds use paths under `assets/`. Production manifests should replace these with CDN URLs.
+- `widgets[].html`: Fully qualified URL to the widget HTML bundle. Local builds default to `http://localhost:4444/<file>.html`; production manifests should reference the CDN location.
+- `widgets[].assets`: Optional relative paths (or absolute URLs) pointing to the generated asset files. Local builds store paths relative to the `assets/` directory (e.g., `pizzaz-2d2b.html`). Production manifests should replace these with CDN URLs.
 
 ## Build Guarantees
 
@@ -61,6 +61,7 @@ Configure the refresh endpoint via environment variables:
 - `WIDGETS_MANIFEST_PATH` (optional): Override the manifest location (defaults to `assets/widgets.json`).
 - `WIDGETS_REFRESH_TOKEN`: Bearer token required to access the refresh endpoint. If unset, the endpoint returns `404`.
 - `WIDGETS_REFRESH_RATE_LIMIT` (optional): Rate limit in the form `count/window`, e.g. `10/60s` (default). Supports seconds (`s`) or minutes (`m`).
+- `WIDGETS_ASSET_BASE_URL` (optional): Base URL used to generate the `html` URLs in the manifest (defaults to `http://localhost:4444/` for local development).
 
 After running `pnpm run build`, you can trigger a hot reload with:
 

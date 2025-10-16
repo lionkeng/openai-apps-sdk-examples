@@ -165,6 +165,7 @@ Use `mcp[fastapi]` package:
 - Rate limiting configurable via `WIDGETS_REFRESH_RATE_LIMIT` (e.g., `10/60s` by default)
 - Use `pnpm run refresh:widgets` (powered by `scripts/refresh-widgets.mjs`) after `pnpm run build` to load fresh assets without restarting the server
 - Both the server and script read secrets from a root `.env` file (loaded via `dotenvy` / `dotenv`) for local development
+- HTML bundle URLs in the manifest derive from `WIDGETS_ASSET_BASE_URL` (defaults to `http://localhost:4444/`)
 
 ## Key Configuration Files
 

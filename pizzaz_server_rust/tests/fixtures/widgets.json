@@ -8,10 +8,10 @@
       "templateUri": "ui://widget/pizza-map.html",
       "invoking": "Hand-tossing a map",
       "invoked": "Served a fresh map",
-      "html": "<div id=\"pizzaz-root\"></div>",
+      "html": "http://localhost:4444/pizzaz-map.html",
       "responseText": "Rendered a pizza map!",
       "assets": {
-        "html": "https://example.com/pizzaz-2d2b.html",
+        "html": "pizzaz-map.html",
         "css": "https://example.com/pizzaz-2d2b.css",
         "js": "https://example.com/pizzaz-2d2b.js"
       }
@@ -22,10 +22,10 @@
       "templateUri": "ui://widget/pizza-carousel-2d2b.html",
       "invoking": "Carousel some spots",
       "invoked": "Served a fresh carousel",
-      "html": "<div id=\"pizzaz-carousel-root\"></div>",
+      "html": "http://localhost:4444/pizzaz-carousel.html",
       "responseText": "Rendered a pizza carousel!",
       "assets": {
-        "html": "https://example.com/pizzaz-carousel-2d2b.html",
+        "html": "pizzaz-carousel.html",
         "css": "https://example.com/pizzaz-carousel-2d2b.css",
         "js": "https://example.com/pizzaz-carousel-2d2b.js"
       }
@@ -36,10 +36,10 @@
       "templateUri": "ui://widget/pizza-albums-2d2b.html",
       "invoking": "Hand-tossing an album",
       "invoked": "Served a fresh album",
-      "html": "<div id=\"pizzaz-albums-root\"></div>",
+      "html": "http://localhost:4444/pizzaz-albums.html",
       "responseText": "Rendered a pizza album!",
       "assets": {
-        "html": "https://example.com/pizzaz-albums-2d2b.html",
+        "html": "pizzaz-albums.html",
         "css": "https://example.com/pizzaz-albums-2d2b.css",
         "js": "https://example.com/pizzaz-albums-2d2b.js"
       }
@@ -50,10 +50,10 @@
       "templateUri": "ui://widget/pizza-list-2d2b.html",
       "invoking": "Hand-tossing a list",
       "invoked": "Served a fresh list",
-      "html": "<div id=\"pizzaz-list-root\"></div>",
+      "html": "http://localhost:4444/pizzaz-list.html",
       "responseText": "Rendered a pizza list!",
       "assets": {
-        "html": "https://example.com/pizzaz-list-2d2b.html",
+        "html": "pizzaz-list.html",
         "css": "https://example.com/pizzaz-list-2d2b.css",
         "js": "https://example.com/pizzaz-list-2d2b.js"
       }
@@ -64,10 +64,10 @@
       "templateUri": "ui://widget/pizza-video.html",
       "invoking": "Hand-tossing a video",
       "invoked": "Served a fresh video",
-      "html": "<div id=\"pizzaz-video-root\"></div>",
+      "html": "http://localhost:4444/pizzaz-video.html",
       "responseText": "Rendered a pizza video!",
       "assets": {
-        "html": "https://example.com/pizzaz-video-0038.html",
+        "html": "pizzaz-video.html",
         "css": "https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.css",
         "js": "https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.js"
       }

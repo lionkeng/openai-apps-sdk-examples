@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashMap,
+    fs,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock, RwLock},
 };
@@ -224,13 +225,42 @@ fn widget_from_entry(entry: &WidgetManifestEntry, manifest_dir: &Path) -> Result
         .context("validating js asset")?,
     };
 
+    let html_source_url = entry.html.trim().to_string();
+    let html = match assets.html.as_deref() {
+        Some(reference) if !is_remote_path(reference) => {
+            let asset_path = manifest_dir.join(reference);
+            fs::read_to_string(&asset_path).with_context(|| {
+                format!(
+                    "Failed to read HTML asset for widget {} at {}",
+                    entry.id,
+                    asset_path.display()
+                )
+            })?
+        }
+        Some(reference) => {
+            warn!(
+                widget_id = %entry.id,
+                "HTML asset reference '{}' is remote; using manifest URL as fallback",
+                reference
+            );
+            html_source_url.clone()
+        }
+        None => {
+            warn!(
+                widget_id = %entry.id,
+                "Widget missing HTML asset reference; using manifest URL as fallback"
+            );
+            html_source_url.clone()
+        }
+    };
+
     Ok(Widget {
         id: entry.id.trim().to_string(),
         title: entry.title.trim().to_string(),
         template_uri: entry.template_uri.trim().to_string(),
         invoking: entry.invoking.trim().to_string(),
         invoked: entry.invoked.trim().to_string(),
-        html: entry.html.clone(),
+        html,
         response_text: entry.response_text.trim().to_string(),
         assets,
     })
@@ -298,12 +328,13 @@ fn now_utc() -> OffsetDateTime {
     OffsetDateTime::now_utc()
 }
 
-static MANIFEST_PATH: LazyLock<PathBuf> = LazyLock::new(resolve_manifest_path);
+static WIDGETS_MANIFEST_PATH: LazyLock<PathBuf> = LazyLock::new(resolve_manifest_path);
 
+// TODO we need to handle the case when the manifest is stored remotely in cloud storage
 fn resolve_manifest_path() -> PathBuf {
     std::env::var("WIDGETS_MANIFEST_PATH")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("assets/widgets.json"))
+        .unwrap_or_else(|_| PathBuf::from("../assets/widgets.json"))
 }
 
 static REGISTRY: LazyLock<RwLock<Arc<WidgetsRegistry>>> = LazyLock::new(|| {
@@ -313,7 +344,7 @@ static REGISTRY: LazyLock<RwLock<Arc<WidgetsRegistry>>> = LazyLock::new(|| {
 
 /// Returns the configured manifest path.
 pub fn manifest_path() -> PathBuf {
-    MANIFEST_PATH.clone()
+    WIDGETS_MANIFEST_PATH.clone()
 }
 
 /// Returns a clone of the current registry (cheap due to Arc).
@@ -462,10 +493,10 @@ mod tests {
                     "templateUri": "ui://widget/pizza-map.html",
                     "invoking": "Invoking",
                     "invoked": "Invoked",
-                    "html": "<div></div>",
+                    "html": "http://localhost:4444/pizzaz-aaaa.html",
                     "responseText": "Rendered!",
                     "assets": {
-                        "html": "assets/pizzaz-aaaa.html"
+                        "html": "pizzaz-aaaa.html"
                     }
                 }
             ]
@@ -493,8 +524,7 @@ mod tests {
             .expect("manifest dir")
             .to_path_buf();
 
-        let html_path = manifest_dir.join("assets").join("pizzaz-aaaa.html");
-        std::fs::create_dir_all(html_path.parent().unwrap()).unwrap();
+        let html_path = manifest_dir.join("pizzaz-aaaa.html");
         std::fs::write(&html_path, "<div></div>").unwrap();
 
         let manifest = sample_manifest_json();

@@ -27,10 +27,48 @@ const entries = fg.sync("src/**/index.{tsx,jsx}", {
   ignore: ["**/*.stories.*"],
 });
 const outDir = "assets";
+const outDirAbs = path.resolve(outDir);
+const assetBaseUrl = (() => {
+  const raw = process.env.WIDGETS_ASSET_BASE_URL ?? "http://localhost:4444/";
+  return raw.endsWith("/") ? raw : `${raw}/`;
+})();
 
 const PER_ENTRY_CSS_GLOB = "**/*.{css,pcss,scss,sass}";
 const PER_ENTRY_CSS_IGNORE = "**/*.module.*".split(",").map((s) => s.trim());
 const GLOBAL_CSS_LIST = [path.resolve("src/index.css")];
+
+const toPosixPath = (value: string) => value.split(path.sep).join("/");
+
+function normalizeAssetReference(value: string | undefined): string | undefined {
+  if (!value) {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (isRemotePath(trimmed)) {
+    return trimmed;
+  }
+
+  const withoutPrefix = trimmed.replace(new RegExp(`^${outDir}[\\\\/]?`), "");
+  const withoutLeading = withoutPrefix.replace(/^\.?[\\/]?/, "");
+  return toPosixPath(withoutLeading);
+}
+
+function toAbsoluteAssetPath(value: string) {
+  if (path.isAbsolute(value)) {
+    return value;
+  }
+
+  const normalized = normalizeAssetReference(value) ?? value;
+  return path.resolve(outDir, normalized);
+}
+
+function toAssetUrl(value: string) {
+  if (isRemotePath(value)) {
+    return value;
+  }
+  const normalized = normalizeAssetReference(value) ?? value;
+  return new URL(normalized, assetBaseUrl).toString();
+}
 
 const widgetCatalog: WidgetCatalogEntry[] = [
   {
@@ -213,9 +251,9 @@ for (const file of entries) {
 }
 
 const outputs = fs
-  .readdirSync("assets")
+  .readdirSync(outDirAbs)
   .filter((f) => f.endsWith(".js") || f.endsWith(".css"))
-  .map((f) => path.join("assets", f))
+  .map((f) => path.join(outDirAbs, f))
   .filter((p) => fs.existsSync(p));
 
 const renamed = [];
@@ -223,8 +261,11 @@ const bundleArtifacts = new Map<
   string,
   {
     htmlPath: string;
+    htmlRelative: string;
     cssPath?: string;
+    cssRelative?: string;
     jsPath?: string;
+    jsRelative?: string;
     htmlContent: string;
   }
 >();
@@ -251,10 +292,9 @@ console.groupEnd();
 console.log("new hash: ", h);
 
 for (const name of builtNames) {
-  const dir = outDir;
-  const htmlPath = path.join(dir, `${name}-${h}.html`);
-  const cssPath = path.join(dir, `${name}-${h}.css`);
-  const jsPath = path.join(dir, `${name}-${h}.js`);
+  const htmlPath = path.join(outDirAbs, `${name}-${h}.html`);
+  const cssPath = path.join(outDirAbs, `${name}-${h}.css`);
+  const jsPath = path.join(outDirAbs, `${name}-${h}.js`);
 
   const css = fs.existsSync(cssPath)
     ? fs.readFileSync(cssPath, { encoding: "utf8" })
@@ -275,11 +315,22 @@ for (const name of builtNames) {
     "</body>",
     "</html>",
   ].join("\n");
+
   fs.writeFileSync(htmlPath, html, { encoding: "utf8" });
+  const cssExists = fs.existsSync(cssPath);
+  const jsExists = fs.existsSync(jsPath);
+
   bundleArtifacts.set(name, {
     htmlPath,
-    cssPath: fs.existsSync(cssPath) ? cssPath : undefined,
-    jsPath: fs.existsSync(jsPath) ? jsPath : undefined,
+    htmlRelative: normalizeAssetReference(`${name}-${h}.html`) ?? `${name}-${h}.html`,
+    cssPath: cssExists ? cssPath : undefined,
+    cssRelative: cssExists
+      ? normalizeAssetReference(`${name}-${h}.css`) ?? `${name}-${h}.css`
+      : undefined,
+    jsPath: jsExists ? jsPath : undefined,
+    jsRelative: jsExists
+      ? normalizeAssetReference(`${name}-${h}.js`) ?? `${name}-${h}.js`
+      : undefined,
     htmlContent: html,
   });
   console.log(`${htmlPath} (generated)`);
@@ -290,10 +341,6 @@ function isRemotePath(candidate: string | undefined): candidate is string {
     typeof candidate === "string" &&
     /^(https?:)?\/\//i.test(candidate.trim())
   );
-}
-
-function toManifestPath(assetPath: string): string {
-  return path.relative(".", assetPath).split(path.sep).join("/");
 }
 
 function ensureReadable(assetPath: string) {
@@ -308,7 +355,7 @@ function ensureReadable(assetPath: string) {
 
 const manifestWidgets = widgetCatalog
   .map((widget) => {
-    const artifacts = widget.bundleName
+    let artifacts = widget.bundleName
       ? bundleArtifacts.get(widget.bundleName)
       : undefined;
 
@@ -318,37 +365,49 @@ const manifestWidgets = widgetCatalog
       );
     }
 
-    const assets = {
-      html: artifacts
-        ? toManifestPath(artifacts.htmlPath)
-        : widget.assets?.html,
-      css: artifacts?.cssPath
-        ? toManifestPath(artifacts.cssPath)
-        : widget.assets?.css,
-      js: artifacts?.jsPath
-        ? toManifestPath(artifacts.jsPath)
-        : widget.assets?.js,
-    };
+    if (!artifacts && widget.htmlOverride) {
+      const fileName = `${widget.id}-${h}.html`;
+      const htmlPath = path.join(outDirAbs, fileName);
+      const htmlDocument = [
+        "<!doctype html>",
+        "<html>",
+        "<head></head>",
+        "<body>",
+        widget.htmlOverride,
+        "</body>",
+        "</html>",
+      ].join("\n");
 
-    const htmlContent =
-      widget.htmlOverride ?? artifacts?.htmlContent ?? "<!-- empty -->";
+      fs.writeFileSync(htmlPath, htmlDocument, { encoding: "utf8" });
+      artifacts = {
+        htmlPath,
+        htmlRelative: normalizeAssetReference(fileName) ?? fileName,
+        htmlContent: htmlDocument,
+      };
+      console.log(`${htmlPath} (generated from override)`);
+    }
 
-    if (!htmlContent.trim()) {
+    const htmlAssetRef =
+      artifacts?.htmlRelative ?? normalizeAssetReference(widget.assets?.html);
+    const cssAssetRef =
+      artifacts?.cssRelative ?? normalizeAssetReference(widget.assets?.css);
+    const jsAssetRef =
+      artifacts?.jsRelative ?? normalizeAssetReference(widget.assets?.js);
+
+    if (!htmlAssetRef) {
       throw new Error(
-        `Widget "${widget.id}" produced an empty HTML payload; ensure build artifacts exist`
+        `Widget "${widget.id}" is missing an HTML asset or override`
       );
     }
 
-    for (const key of ["html", "css", "js"] as const) {
-      const candidate = assets[key];
-      if (!candidate) {
+    for (const candidate of [htmlAssetRef, cssAssetRef, jsAssetRef]) {
+      if (!candidate || isRemotePath(candidate)) {
         continue;
       }
-      if (isRemotePath(candidate)) {
-        continue;
-      }
-      ensureReadable(path.resolve(candidate));
+      ensureReadable(toAbsoluteAssetPath(candidate));
     }
+
+    const htmlUrl = toAssetUrl(htmlAssetRef);
 
     return {
       id: widget.id,
@@ -356,9 +415,13 @@ const manifestWidgets = widgetCatalog
       templateUri: widget.templateUri,
       invoking: widget.invoking,
       invoked: widget.invoked,
-      html: htmlContent,
+      html: htmlUrl,
       responseText: widget.responseText,
-      assets,
+      assets: {
+        html: htmlAssetRef,
+        css: cssAssetRef,
+        js: jsAssetRef,
+      },
     };
   })
   .sort((a, b) => a.id.localeCompare(b.id));

@@ -10,7 +10,12 @@ use axum::{
 use http_body_util::BodyExt;
 use pizzaz_server_rust::handler::PizzazServerHandler;
 use serde_json::{json, Value};
-use std::{net::SocketAddr, path::PathBuf, sync::Once};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Once, OnceLock},
+};
+use tokio::sync::Mutex as AsyncMutex;
 use tower::ServiceExt; // for oneshot()
 
 fn ensure_manifest_loaded() {
@@ -40,6 +45,11 @@ fn add_connect_info(mut request: Request<Body>, port: u16) -> Request<Body> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     request.extensions_mut().insert(AxumConnectInfo(addr));
     request
+}
+
+async fn env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    static ENV_MUTEX: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    ENV_MUTEX.get_or_init(|| AsyncMutex::new(())).lock().await
 }
 
 /// Helper to build JSON-RPC request
@@ -199,6 +209,7 @@ async fn test_refresh_endpoint_requires_token() {
 
 #[tokio::test]
 async fn test_refresh_endpoint_succeeds_with_valid_token() {
+    let _env_guard = env_lock().await;
     std::env::set_var("WIDGETS_REFRESH_RATE_LIMIT", "10/60s");
     let app = create_test_app();
     let request = add_connect_info(
@@ -222,6 +233,7 @@ async fn test_refresh_endpoint_succeeds_with_valid_token() {
 
 #[tokio::test]
 async fn test_refresh_endpoint_rate_limit() {
+    let _env_guard = env_lock().await;
     std::env::set_var("WIDGETS_REFRESH_RATE_LIMIT", "1/60s");
     let app = create_test_app();
 
