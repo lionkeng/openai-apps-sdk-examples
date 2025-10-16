@@ -9,7 +9,6 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use semver::Version;
-use serde_json::Value as JsonValue;
 use time::{format_description::well_known::Iso8601, OffsetDateTime};
 use tracing::{debug, error, info, warn};
 
@@ -32,14 +31,26 @@ pub struct Widget {
 
 impl Widget {
     /// Generates OpenAI-specific metadata for widget integration.
-    pub fn meta(&self) -> JsonValue {
-        serde_json::json!({
-            "openai/outputTemplate": self.template_uri,
-            "openai/toolInvocation/invoking": self.invoking,
-            "openai/toolInvocation/invoked": self.invoked,
-            "openai/widgetAccessible": true,
-            "openai/resultCanProduceWidget": true,
-        })
+    pub fn meta(&self) -> rmcp::model::Meta {
+        let mut map = serde_json::Map::new();
+        map.insert(
+            "openai/outputTemplate".to_string(),
+            serde_json::json!(self.template_uri),
+        );
+        map.insert(
+            "openai/toolInvocation/invoking".to_string(),
+            serde_json::json!(self.invoking),
+        );
+        map.insert(
+            "openai/toolInvocation/invoked".to_string(),
+            serde_json::json!(self.invoked),
+        );
+        map.insert("openai/widgetAccessible".to_string(), serde_json::json!(true));
+        map.insert(
+            "openai/resultCanProduceWidget".to_string(),
+            serde_json::json!(true),
+        );
+        rmcp::model::Meta(map)
     }
 }
 

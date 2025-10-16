@@ -686,7 +686,7 @@ fn augment_widget_metadata(payload: &mut Value) {
                         );
                         object
                             .entry("_meta".to_string())
-                            .or_insert_with(|| widget.meta());
+                            .or_insert_with(|| serde_json::Value::Object(widget.meta().0));
                     } else {
                         tracing::trace!(
                             "augment_widget_metadata: tool '{name}' not found in registry"
@@ -707,7 +707,7 @@ fn augment_widget_metadata(payload: &mut Value) {
                         );
                         object
                             .entry("_meta".to_string())
-                            .or_insert_with(|| widget.meta());
+                            .or_insert_with(|| serde_json::Value::Object(widget.meta().0));
                     } else {
                         tracing::trace!(
                             "augment_widget_metadata: resource '{uri}' not found in registry"
@@ -732,7 +732,7 @@ fn augment_widget_metadata(payload: &mut Value) {
                         );
                         object
                             .entry("_meta".to_string())
-                            .or_insert_with(|| widget.meta());
+                            .or_insert_with(|| serde_json::Value::Object(widget.meta().0));
                     } else {
                         tracing::trace!(
                             "augment_widget_metadata: template '{uri}' not found in registry"

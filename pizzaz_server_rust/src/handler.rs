@@ -23,7 +23,7 @@ pub struct WidgetTool {
     pub title: String,
     pub description: String,
     pub input_schema: JsonValue,
-    pub meta: JsonValue,
+    pub meta: Meta,
 }
 
 /// Result of invoking a widget tool.
@@ -31,7 +31,7 @@ pub struct WidgetTool {
 pub struct WidgetCallResult {
     pub content: Vec<Content>,
     pub structured_content: JsonValue,
-    pub meta: JsonValue,
+    pub meta: Meta,
 }
 
 /// Represents a widget resource entry.
@@ -41,7 +41,7 @@ pub struct WidgetResource {
     pub name: String,
     pub description: String,
     pub mime_type: String,
-    pub meta: JsonValue,
+    pub meta: Meta,
 }
 
 /// HTML content returned when reading a widget resource.
@@ -50,7 +50,7 @@ pub struct WidgetResourceContent {
     pub uri: String,
     pub mime_type: String,
     pub text: String,
-    pub meta: JsonValue,
+    pub meta: Meta,
 }
 
 /// Resource template definition for widgets.
@@ -60,7 +60,7 @@ pub struct WidgetResourceTemplate {
     pub name: String,
     pub description: String,
     pub mime_type: String,
-    pub meta: JsonValue,
+    pub meta: Meta,
 }
 
 /// MCP server handler for Pizzaz widgets.
@@ -171,13 +171,6 @@ fn build_tool_input_schema() -> JsonValue {
     })
 }
 
-fn value_to_meta(value: JsonValue) -> Meta {
-    match value {
-        JsonValue::Object(map) => Meta(map),
-        _ => Meta::default(),
-    }
-}
-
 fn value_to_map(value: &JsonValue) -> JsonMap<String, JsonValue> {
     value.as_object().cloned().unwrap_or_default()
 }
@@ -187,7 +180,7 @@ fn widget_call_result_to_mcp(result: WidgetCallResult) -> McpCallToolResult {
         content: result.content,
         structured_content: Some(result.structured_content),
         is_error: Some(false),
-        meta: Some(value_to_meta(result.meta)),
+        meta: Some(result.meta),
     }
 }
 
@@ -196,7 +189,7 @@ fn widget_resource_content_to_mcp(content: WidgetResourceContent) -> ResourceCon
         uri: content.uri,
         mime_type: Some(content.mime_type),
         text: content.text,
-        meta: Some(value_to_meta(content.meta)),
+        meta: Some(content.meta),
     }
 }
 
@@ -470,10 +463,7 @@ mod tests {
         assert!(names.contains(&"pizza-list"));
         assert!(names.contains(&"pizza-video"));
         for tool in tools {
-            let meta = tool
-                .meta
-                .as_object()
-                .expect("tool meta should be an object");
+            let meta = &tool.meta.0;
             assert!(meta.contains_key("openai/outputTemplate"));
             assert_eq!(meta["openai/widgetAccessible"], JsonValue::Bool(true));
         }
@@ -500,7 +490,7 @@ mod tests {
             }
             _ => panic!("Expected text content"),
         }
-        let meta = result.meta.as_object().expect("meta should be present");
+        let meta = &result.meta.0;
         assert_eq!(meta["openai/widgetAccessible"], JsonValue::Bool(true));
         assert!(meta["openai/outputTemplate"].is_string());
     }
@@ -543,10 +533,7 @@ mod tests {
             .iter()
             .any(|resource| resource.uri == "ui://widget/pizza-map.html"));
         for resource in resources {
-            let meta = resource
-                .meta
-                .as_object()
-                .expect("resource meta should be an object");
+            let meta = &resource.meta.0;
             assert!(meta.contains_key("openai/outputTemplate"));
         }
     }
@@ -561,7 +548,7 @@ mod tests {
             .expect("resource should exist");
         assert_eq!(content.mime_type, HTML_WIDGET_MIME);
         assert!(content.text.contains("pizzaz"));
-        let meta = content.meta.as_object().expect("meta should be present");
+        let meta = &content.meta.0;
         assert!(meta["openai/outputTemplate"].is_string());
     }
 
