@@ -3,7 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'node:http'
-import { URL } from 'node:url'
+import { fileURLToPath, URL } from 'node:url'
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
@@ -23,6 +23,8 @@ import {
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
+import path from 'node:path'
+import fs from 'fs'
 
 type PizzazWidget = {
   id: string
@@ -32,6 +34,44 @@ type PizzazWidget = {
   invoked: string
   html: string
   responseText: string
+}
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const ROOT_DIR = path.resolve(__dirname, '..', '..')
+const ASSETS_DIR = path.resolve(ROOT_DIR, 'assets')
+
+function readWidgetHtml(componentName: string): string {
+  if (!fs.existsSync(ASSETS_DIR)) {
+    throw new Error(
+      `Widget assets not found. Expected directory ${ASSETS_DIR}. Run "pnpm run build" before starting the server.`
+    )
+  }
+
+  const directPath = path.join(ASSETS_DIR, `${componentName}.html`)
+  let htmlContents: string | null = null
+
+  if (fs.existsSync(directPath)) {
+    htmlContents = fs.readFileSync(directPath, 'utf8')
+  } else {
+    const candidates = fs
+      .readdirSync(ASSETS_DIR)
+      .filter(
+        (file) => file.startsWith(`${componentName}-`) && file.endsWith('.html')
+      )
+      .sort()
+    const fallback = candidates[candidates.length - 1]
+    if (fallback) {
+      htmlContents = fs.readFileSync(path.join(ASSETS_DIR, fallback), 'utf8')
+    }
+  }
+
+  if (!htmlContents) {
+    throw new Error(
+      `Widget HTML for "${componentName}" not found in ${ASSETS_DIR}. Run "pnpm run build" to generate the assets.`
+    )
+  }
+
+  return htmlContents
 }
 
 function widgetMeta(widget: PizzazWidget) {
@@ -51,64 +91,35 @@ const widgets: PizzazWidget[] = [
     templateUri: 'ui://widget/pizza-map.html',
     invoking: 'Hand-tossing a map',
     invoked: 'Served a fresh map',
-    html: `
-<div id="pizzaz-root"></div>
-<link rel="stylesheet" href="http://localhost:4444/pizzaz-2d2b.css">
-<script type="module" src="http://localhost:4444/pizzaz-2d2b.js"></script>
-    `.trim(),
+    html: readWidgetHtml('pizzaz'),
     responseText: 'Rendered a pizza map!',
   },
   {
     id: 'pizza-carousel',
     title: 'Show Pizza Carousel',
-    templateUri: 'ui://widget/pizza-carousel-2d2b.html',
+    templateUri: 'ui://widget/pizza-carousel.html',
     invoking: 'Carousel some spots',
     invoked: 'Served a fresh carousel',
-    html: `
-<div id="pizzaz-carousel-root"></div>
-<link rel="stylesheet" href="http://localhost:4444/pizzaz-carousel-2d2b.css">
-<script type="module" src="http://localhost:4444/pizzaz-carousel-2d2b.js"></script>
-    `.trim(),
+    html: readWidgetHtml('pizzaz-carousel'),
     responseText: 'Rendered a pizza carousel!',
   },
   {
     id: 'pizza-albums',
     title: 'Show Pizza Album',
-    templateUri: 'ui://widget/pizza-albums-2d2b.html',
+    templateUri: 'ui://widget/pizza-albums.html',
     invoking: 'Hand-tossing an album',
     invoked: 'Served a fresh album',
-    html: `
-<div id="pizzaz-albums-root"></div>
-<link rel="stylesheet" href="http://localhost:4444/pizzaz-albums-2d2b.css">
-<script type="module" src="https://localhost:4444/pizzaz-albums-2d2b.js"></script>
-    `.trim(),
+    html: readWidgetHtml('pizzaz-albums'),
     responseText: 'Rendered a pizza album!',
   },
   {
     id: 'pizza-list',
     title: 'Show Pizza List',
-    templateUri: 'ui://widget/pizza-list-2d2b.html',
+    templateUri: 'ui://widget/pizza-list.html',
     invoking: 'Hand-tossing a list',
     invoked: 'Served a fresh list',
-    html: `
-<div id="pizzaz-list-root"></div>
-<link rel="stylesheet" href="http://localhost:4444/pizzaz-list-2d2b.css">
-<script type="module" src="http://localhost:4444/pizzaz-list-2d2b.js"></script>
-    `.trim(),
+    html: readWidgetHtml('pizzaz-list'),
     responseText: 'Rendered a pizza list!',
-  },
-  {
-    id: 'pizza-video',
-    title: 'Show Pizza Video',
-    templateUri: 'ui://widget/pizza-video.html',
-    invoking: 'Hand-tossing a video',
-    invoked: 'Served a fresh video',
-    html: `
-<div id="pizzaz-video-root"></div>
-<link rel="stylesheet" href="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.css">
-<script type="module" src="https://persistent.oaistatic.com/ecosystem-built-assets/pizzaz-video-0038.js"></script>
-    `.trim(),
-    responseText: 'Rendered a pizza video!',
   },
 ]
 
@@ -127,10 +138,6 @@ const toolInputSchema = {
       type: 'string',
       description: 'Topping to mention when rendering the widget.',
     },
-    city: {
-      type: 'string',
-      description: 'City filter for pizzerias to show in the widget.',
-    },
   },
   required: ['pizzaTopping'],
   additionalProperties: false,
@@ -138,7 +145,6 @@ const toolInputSchema = {
 
 const toolInputParser = z.object({
   pizzaTopping: z.string(),
-  city: z.string(),
 })
 
 const tools: Tool[] = widgets.map((widget) => ({
@@ -147,6 +153,12 @@ const tools: Tool[] = widgets.map((widget) => ({
   inputSchema: toolInputSchema,
   title: widget.title,
   _meta: widgetMeta(widget),
+  // To disable the approval prompt for the widgets
+  annotations: {
+    destructiveHint: false,
+    openWorldHint: false,
+    readOnlyHint: true,
+  },
 }))
 
 const resources: Resource[] = widgets.map((widget) => ({
@@ -242,7 +254,6 @@ function createPizzazServer(): Server {
         ],
         structuredContent: {
           pizzaTopping: args.pizzaTopping,
-          city: args.city,
         },
         _meta: widgetMeta(widget),
       }

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List
 
 import mcp.types as types
@@ -56,19 +58,32 @@ class SolarWidget:
     response_text: str
 
 
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+
+
+@lru_cache(maxsize=None)
+def _load_widget_html(component_name: str) -> str:
+    html_path = ASSETS_DIR / f"{component_name}.html"
+    if html_path.exists():
+        return html_path.read_text(encoding="utf8")
+
+    fallback_candidates = sorted(ASSETS_DIR.glob(f"{component_name}-*.html"))
+    if fallback_candidates:
+        return fallback_candidates[-1].read_text(encoding="utf8")
+
+    raise FileNotFoundError(
+        f'Widget HTML for "{component_name}" not found in {ASSETS_DIR}. '
+        "Run `pnpm run build` to generate the assets before starting the server."
+    )
+
+
 WIDGET = SolarWidget(
     identifier="solar-system",
     title="Explore the Solar System",
     template_uri="ui://widget/solar-system.html",
     invoking="Charting the solar system",
     invoked="Solar system ready",
-    html=(
-        "<div id=\"solar-system-root\"></div>\n"
-        "<link rel=\"stylesheet\" href=\"https://persistent.oaistatic.com/"
-        "ecosystem-built-assets/solar-system-0038.css\">\n"
-        "<script type=\"module\" src=\"https://persistent.oaistatic.com/"
-        "ecosystem-built-assets/solar-system-0038.js\"></script>"
-    ),
+    html=_load_widget_html("solar-system"),
     response_text="Solar system ready",
 )
 
@@ -92,8 +107,6 @@ class SolarInput(BaseModel):
 
 mcp = FastMCP(
     name="solar-system-python",
-    sse_path="/mcp",
-    message_path="/mcp/messages",
     stateless_http=True,
 )
 
@@ -112,10 +125,10 @@ def _tool_meta(widget: SolarWidget) -> Dict[str, Any]:
         "openai/widgetAccessible": True,
         "openai/resultCanProduceWidget": True,
         "annotations": {
-          "destructiveHint": False,
-          "openWorldHint": False,
-          "readOnlyHint": True,
-        }
+            "destructiveHint": False,
+            "openWorldHint": False,
+            "readOnlyHint": True,
+        },
     }
 
 
@@ -139,10 +152,10 @@ def _normalize_planet(name: str) -> str | None:
     if not key:
         return DEFAULT_PLANET
 
-    clean = ''.join(ch for ch in key if ch.isalnum())
+    clean = "".join(ch for ch in key if ch.isalnum())
 
     for planet in PLANETS:
-        planet_key = ''.join(ch for ch in planet.lower() if ch.isalnum())
+        planet_key = "".join(ch for ch in planet.lower() if ch.isalnum())
         if clean == planet_key or key == planet.lower():
             return planet
 
@@ -151,7 +164,7 @@ def _normalize_planet(name: str) -> str | None:
         return alias
 
     for planet in PLANETS:
-        planet_key = ''.join(ch for ch in planet.lower() if ch.isalnum())
+        planet_key = "".join(ch for ch in planet.lower() if ch.isalnum())
         if planet_key.startswith(clean):
             return planet
 
@@ -246,10 +259,7 @@ async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
                 content=[
                     types.TextContent(
                         type="text",
-                        text=(
-                            "Unknown planet. Provide one of: "
-                            + ", ".join(PLANETS)
-                        ),
+                        text=("Unknown planet. Provide one of: " + ", ".join(PLANETS)),
                     )
                 ],
                 isError=True,
@@ -310,4 +320,4 @@ except Exception:  # pragma: no cover - middleware is optional
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("solar-system_server_python.main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)

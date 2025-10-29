@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Dict, List
 
 import mcp.types as types
@@ -29,6 +31,25 @@ class PizzazWidget:
     response_text: str
 
 
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+
+
+@lru_cache(maxsize=None)
+def _load_widget_html(component_name: str) -> str:
+    html_path = ASSETS_DIR / f"{component_name}.html"
+    if html_path.exists():
+        return html_path.read_text(encoding="utf8")
+
+    fallback_candidates = sorted(ASSETS_DIR.glob(f"{component_name}-*.html"))
+    if fallback_candidates:
+        return fallback_candidates[-1].read_text(encoding="utf8")
+
+    raise FileNotFoundError(
+        f'Widget HTML for "{component_name}" not found in {ASSETS_DIR}. '
+        "Run `pnpm run build` to generate the assets before starting the server."
+    )
+
+
 widgets: List[PizzazWidget] = [
     PizzazWidget(
         identifier="pizza-map",
@@ -36,13 +57,7 @@ widgets: List[PizzazWidget] = [
         template_uri="ui://widget/pizza-map.html",
         invoking="Hand-tossing a map",
         invoked="Served a fresh map",
-        html=(
-            "<div id=\"pizzaz-root\"></div>\n"
-            "<link rel=\"stylesheet\" href=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-0038.css\">\n"
-            "<script type=\"module\" src=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-0038.js\"></script>"
-        ),
+        html=_load_widget_html("pizzaz"),
         response_text="Rendered a pizza map!",
     ),
     PizzazWidget(
@@ -51,13 +66,7 @@ widgets: List[PizzazWidget] = [
         template_uri="ui://widget/pizza-carousel.html",
         invoking="Carousel some spots",
         invoked="Served a fresh carousel",
-        html=(
-            "<div id=\"pizzaz-carousel-root\"></div>\n"
-            "<link rel=\"stylesheet\" href=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-carousel-0038.css\">\n"
-            "<script type=\"module\" src=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-carousel-0038.js\"></script>"
-        ),
+        html=_load_widget_html("pizzaz-carousel"),
         response_text="Rendered a pizza carousel!",
     ),
     PizzazWidget(
@@ -66,13 +75,7 @@ widgets: List[PizzazWidget] = [
         template_uri="ui://widget/pizza-albums.html",
         invoking="Hand-tossing an album",
         invoked="Served a fresh album",
-        html=(
-            "<div id=\"pizzaz-albums-root\"></div>\n"
-            "<link rel=\"stylesheet\" href=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-albums-0038.css\">\n"
-            "<script type=\"module\" src=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-albums-0038.js\"></script>"
-        ),
+        html=_load_widget_html("pizzaz-albums"),
         response_text="Rendered a pizza album!",
     ),
     PizzazWidget(
@@ -81,29 +84,8 @@ widgets: List[PizzazWidget] = [
         template_uri="ui://widget/pizza-list.html",
         invoking="Hand-tossing a list",
         invoked="Served a fresh list",
-        html=(
-            "<div id=\"pizzaz-list-root\"></div>\n"
-            "<link rel=\"stylesheet\" href=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-list-0038.css\">\n"
-            "<script type=\"module\" src=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-list-0038.js\"></script>"
-        ),
+        html=_load_widget_html("pizzaz-list"),
         response_text="Rendered a pizza list!",
-    ),
-    PizzazWidget(
-        identifier="pizza-video",
-        title="Show Pizza Video",
-        template_uri="ui://widget/pizza-video.html",
-        invoking="Hand-tossing a video",
-        invoked="Served a fresh video",
-        html=(
-            "<div id=\"pizzaz-video-root\"></div>\n"
-            "<link rel=\"stylesheet\" href=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-video-0038.css\">\n"
-            "<script type=\"module\" src=\"https://persistent.oaistatic.com/"
-            "ecosystem-built-assets/pizzaz-video-0038.js\"></script>"
-        ),
-        response_text="Rendered a pizza video!",
     ),
 ]
 
@@ -111,8 +93,12 @@ widgets: List[PizzazWidget] = [
 MIME_TYPE = "text/html+skybridge"
 
 
-WIDGETS_BY_ID: Dict[str, PizzazWidget] = {widget.identifier: widget for widget in widgets}
-WIDGETS_BY_URI: Dict[str, PizzazWidget] = {widget.template_uri: widget for widget in widgets}
+WIDGETS_BY_ID: Dict[str, PizzazWidget] = {
+    widget.identifier: widget for widget in widgets
+}
+WIDGETS_BY_URI: Dict[str, PizzazWidget] = {
+    widget.template_uri: widget for widget in widgets
+}
 
 
 class PizzaInput(BaseModel):
@@ -129,8 +115,6 @@ class PizzaInput(BaseModel):
 
 mcp = FastMCP(
     name="pizzaz-python",
-    sse_path="/mcp",
-    message_path="/mcp/messages",
     stateless_http=True,
 )
 
@@ -159,11 +143,6 @@ def _tool_meta(widget: PizzazWidget) -> Dict[str, Any]:
         "openai/toolInvocation/invoked": widget.invoked,
         "openai/widgetAccessible": True,
         "openai/resultCanProduceWidget": True,
-        "annotations": {
-          "destructiveHint": False,
-          "openWorldHint": False,
-          "readOnlyHint": True,
-        }
     }
 
 
@@ -188,6 +167,12 @@ async def _list_tools() -> List[types.Tool]:
             description=widget.title,
             inputSchema=deepcopy(TOOL_INPUT_SCHEMA),
             _meta=_tool_meta(widget),
+            # To disable the approval prompt for the tools
+            annotations={
+                "destructiveHint": False,
+                "openWorldHint": False,
+                "readOnlyHint": True,
+            },
         )
         for widget in widgets
     ]
@@ -324,4 +309,4 @@ except Exception:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("pizzaz_server_python.main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)

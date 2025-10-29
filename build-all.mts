@@ -256,7 +256,6 @@ const outputs = fs
   .map((f) => path.join(outDirAbs, f))
   .filter((p) => fs.existsSync(p));
 
-const renamed = [];
 const bundleArtifacts = new Map<
   string,
   {
@@ -284,12 +283,17 @@ for (const out of outputs) {
   const newName = path.join(dir, `${base}-${h}${ext}`);
 
   fs.renameSync(out, newName);
-  renamed.push({ old: out, neu: newName });
   console.log(`${out} -> ${newName}`);
 }
 console.groupEnd();
 
 console.log("new hash: ", h);
+
+const defaultBaseUrl = "http://localhost:4444";
+const baseUrlCandidate = process.env.BASE_URL?.trim() ?? "";
+const baseUrlRaw = baseUrlCandidate.length > 0 ? baseUrlCandidate : defaultBaseUrl;
+const normalizedBaseUrl = baseUrlRaw.replace(/\/+$/, "") || defaultBaseUrl;
+console.log(`Using BASE_URL ${normalizedBaseUrl} for generated HTML`);
 
 for (const name of builtNames) {
   const htmlPath = path.join(outDirAbs, `${name}-${h}.html`);
